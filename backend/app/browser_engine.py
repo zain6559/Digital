@@ -4,6 +4,7 @@ from .config import settings
 from .schemas import Event
 from .self_healing import self_healing_executor
 from .websocket import bus
+from .cognitive_core import cognitive_core
 
 class BrowserEngine:
     def __init__(self): self.last_action={}; self.profile_root=Path('playwright_profiles'); self.search_url='https://duckduckgo.com/html/'
@@ -30,6 +31,8 @@ class BrowserEngine:
                 finally:
                     await ctx.close()
         result=await self_healing_executor.run('browser.safe_search',attempt,'desktop',query)
+        if result.ok and result.result and result.result.get('results'):
+            cognitive_core.run_inquiry_results(query, result.result['results'])
         await bus.publish(Event(type='browser.result' if result.ok else 'browser.error', payload=result.__dict__))
         return result.__dict__
 browser_engine=BrowserEngine()

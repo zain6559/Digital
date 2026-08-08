@@ -13,6 +13,7 @@ It is not a conscious system, not a general autonomous operator, and not a multi
 - **Vision fallback:** validates frame metadata and returns a 3x3 grid target estimate from directional words. It does not identify visual objects without a real multimodal adapter.
 - **Mobile bridge:** builds constrained ADB commands for device scan, tap, text, and wake actions. It validates arguments, times out hung commands, and reports failures explicitly.
 - **WebSocket event bus:** publishes bounded event history to allowed origins configured by environment variables.
+- **Cognitive core:** stores validated evidence, revisable beliefs, world relations, goals, predictions, outcome errors, learning statistics, and bounded autonomy ticks in JSON persistence. It is still a prototype, not consciousness.
 
 ## Quick start
 

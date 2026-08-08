@@ -1,10 +1,11 @@
 'use client';
 import { useEffect } from 'react';
-import AgentGraph from '../components/AgentGraph';
+import dynamic from 'next/dynamic';
 import CommandConsole from '../components/CommandConsole';
-import MemoryWorlds from '../components/MemoryWorlds';
 import MobileMirror from '../components/MobileMirror';
-import NoorSphere from '../components/NoorSphere';
+const AgentGraph = dynamic(() => import('../components/AgentGraph'), { ssr: false });
+const MemoryWorlds = dynamic(() => import('../components/MemoryWorlds'), { ssr: false });
+const NoorSphere = dynamic(() => import('../components/NoorSphere'), { ssr: false });
 import { API, loadRealms } from '../lib/api';
 import { useNoorStore } from '../lib/store';
 import { MemoryNode, NoorEvent } from '../lib/types';

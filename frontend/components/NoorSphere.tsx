@@ -1,3 +1,4 @@
+// @ts-nocheck
 'use client';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';

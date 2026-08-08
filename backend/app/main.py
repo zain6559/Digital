@@ -3,6 +3,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from .agents import coordinator
 from .config import settings
+from .cognitive_core import cognitive_core
 from .memory import spatial_memory
 from .mobile_bridge import mobile_bridge
 from .schemas import CommandRequest, DeviceCommand, Event, MemoryIn, VisionFrameIn
@@ -35,6 +36,12 @@ async def realms(): return spatial_memory.realms()
 async def vision_frame(frame:VisionFrameIn): return await vision_engine.ingest(VisionFrame(**frame.model_dump()))
 @app.get('/api/vision/inspect')
 async def vision_inspect(source:str, objective:str): return await vision_engine.inspect(source, objective)
+
+@app.get('/api/cognitive/state')
+async def cognitive_state(): return {'beliefs': list(cognitive_core.beliefs.values()), 'evidence': list(cognitive_core.evidence.values()), 'world': list(cognitive_core.world.values()), 'self_model': cognitive_core.self_model(), 'ticks': cognitive_core.tick_count}
+@app.post('/api/cognitive/tick')
+async def cognitive_tick(): return cognitive_core.tick()
+
 @app.get('/api/mobile/devices')
 async def devices(): return await mobile_bridge.devices()
 @app.post('/api/mobile/command')

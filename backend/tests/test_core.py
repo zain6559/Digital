@@ -6,7 +6,7 @@ from app.agents import Coordinator
 from app.llm_client import LocalLLMClient
 from app.mobile_bridge import MobileBridge
 from app.policy import policy_gate
-from app.schemas import CommandRequest, MemoryIn, Risk
+from app.schemas import CommandRequest, DeviceCommand, Event, MemoryIn, Risk
 from app.memory import SpatialMemoryAgent
 from app.vision import VisionFrame, LiveVisionContextEngine
 from app.self_healing import SelfHealingExecutor
@@ -147,3 +147,87 @@ def test_local_failure_can_fallback_without_leaking_api_key(monkeypatch):
     client = module.HybridLLMClient(base_url='http://localhost:1')
     assert client._is_local_failure_retryable(RuntimeError('CUDA OOM')) is True
     assert 'sk-secret-value' not in str(client.route('security audit', risk='high'))
+
+
+def test_policy_intent_context_action_confidence():
+    assessment = policy_gate.analyze('please send message about security settings', context={'external_effect': True})
+    assert assessment.intent == 'operate'
+    assert assessment.action_class == 'user_visible_or_destructive_action'
+    assert assessment.confidence >= 0.6
+    assert assessment.requires_confirmation is True
+    low = policy_gate.analyze('summarize account architecture notes')
+    assert low.risk in {Risk.low, Risk.medium}
+    assert low.requires_confirmation is False
+
+
+def test_memory_deduplicates_and_ranks_title_tags_content():
+    agent = SpatialMemoryAgent()
+    first = agent.add(MemoryIn(title='API timeout fix', content='backend retry code', tags=['python'], importance=3))
+    duplicate = agent.add(MemoryIn(title='API timeout fix', content='backend retry code', tags=['python'], importance=9))
+    agent.add(MemoryIn(title='other', content='api timeout mentioned only in content', tags=[], importance=1))
+    assert first.id == duplicate.id
+    results = agent.search('api timeout python')
+    assert results[0].id == first.id
+    assert results[0].importance == 9
+
+
+def test_vision_declares_grid_fallback_and_low_confidence_without_direction():
+    async def run():
+        engine = LiveVisionContextEngine(max_frames=1)
+        frame = await engine.ingest(VisionFrame(source='desk', width=100, height=100, mime='text/plain', data_base64='%%%'))
+        assert frame['mode'] == 'grid_fallback'
+        assert 'invalid_base64' in frame['warnings']
+        inspected = await engine.inspect('desk', 'find the submit button')
+        assert inspected['mode'] == 'grid_fallback'
+        assert 'does not identify visual objects' in inspected['strategy']
+        assert inspected['confidence'] <= 0.25
+    asyncio.run(run())
+
+
+def test_self_healing_rejects_low_confidence_plan():
+    async def run():
+        attempts = {'count': 0}
+        async def action(_attempt, plan):
+            attempts['count'] += 1
+            assert plan is None
+            raise RuntimeError('still broken')
+        result = await SelfHealingExecutor(max_attempts=2, timeout_seconds=1).run('reject-plan', action, 'missing-source', 'find submit button')
+        assert result.ok is False
+        assert result.recovery_plan is None
+        assert attempts['count'] == 2
+    asyncio.run(run())
+
+
+def test_mobile_args_validation_and_text_sanitizing():
+    bridge = MobileBridge()
+    assert bridge._args_for(DeviceCommand(action='text', text='hello % world\n'))[-1] == 'hello%sworld'
+    try:
+        bridge._validate_args(('devices', ''))
+    except ValueError as exc:
+        assert 'invalid adb argument' in str(exc)
+    else:
+        raise AssertionError('invalid argument accepted')
+
+
+def test_event_bus_origin_and_history():
+    from app.websocket import EventBus
+    bus2 = EventBus(history_limit=2)
+    assert bus2._origin_allowed('http://localhost:3000') is True
+    assert bus2._origin_allowed('http://evil.example') is False
+    async def run():
+        await bus2.publish(Event(type='one', payload={}))
+        await bus2.publish(Event(type='two', payload={}))
+        await bus2.publish(Event(type='three', payload={}))
+        assert [e.type for e in bus2.history] == ['two', 'three']
+    asyncio.run(run())
+
+
+def test_backend_smoke_health_and_command():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as client:
+        health = client.get('/health')
+        assert health.status_code == 200
+        res = client.post('/api/command', json={'prompt': 'remember api smoke test', 'context': {}})
+        assert res.status_code == 200
+        assert res.json()['status'] == 'completed'

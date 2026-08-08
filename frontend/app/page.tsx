@@ -1,10 +1,11 @@
 'use client';
 import { useEffect } from 'react';
-import AgentGraph from '../components/AgentGraph';
+import dynamic from 'next/dynamic';
 import CommandConsole from '../components/CommandConsole';
-import MemoryWorlds from '../components/MemoryWorlds';
 import MobileMirror from '../components/MobileMirror';
-import NoorSphere from '../components/NoorSphere';
+const AgentGraph = dynamic(() => import('../components/AgentGraph'), { ssr: false });
+const MemoryWorlds = dynamic(() => import('../components/MemoryWorlds'), { ssr: false });
+const NoorSphere = dynamic(() => import('../components/NoorSphere'), { ssr: false });
 import { API, loadRealms } from '../lib/api';
 import { useNoorStore } from '../lib/store';
 import { MemoryNode, NoorEvent } from '../lib/types';
@@ -29,5 +30,5 @@ export default function Home() {
     connect();
     return () => { closed = true; ws?.close(); };
   }, [push, setMemories]);
-  return <main className="min-h-screen bg-[radial-gradient(circle_at_top,#10203f,#05070D_55%)] p-4"><header className="glass rounded-2xl p-4 flex justify-between"><h1 className="text-2xl font-bold text-cyan-300">Noor OS</h1><span className="text-sm text-slate-300">State: {status}</span></header><section className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_.9fr] gap-4 mt-4"><div className="glass rounded-2xl"><NoorSphere status={status} /></div><div className="glass rounded-2xl p-2"><AgentGraph /></div><MobileMirror /></section><section className="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4 mt-4"><div className="glass rounded-2xl p-2"><h2 className="p-2 text-violet-300 font-semibold">Hyper-Dimensional Memory Worlds</h2><MemoryWorlds memories={memories} /></div><CommandConsole /></section></main>;
+  return <main className="min-h-screen bg-[radial-gradient(circle_at_top,#10203f,#05070D_55%)] p-4"><header className="glass rounded-2xl p-4 flex justify-between"><h1 className="text-2xl font-bold text-cyan-300">Noor OS</h1><span className="text-sm text-slate-300">State: {status}</span></header><section className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_.9fr] gap-4 mt-4"><div className="glass rounded-2xl"><NoorSphere status={status} /></div><div className="glass rounded-2xl p-2"><AgentGraph /></div><MobileMirror /></section><section className="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4 mt-4"><div className="glass rounded-2xl p-2"><h2 className="p-2 text-violet-300 font-semibold">Spatial Memory Realms</h2><MemoryWorlds memories={memories} /></div><CommandConsole /></section></main>;
 }

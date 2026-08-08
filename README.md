@@ -1,17 +1,19 @@
 # Noor OS
 
-Noor OS is a local-first agentic control plane with a FastAPI backend, Next.js sci-fi dashboard, spatial memory realms, browser automation with human-in-the-loop safeguards, and an Android ADB-over-Wi-Fi mobile bridge.
+Noor OS is a small local-first control-plane prototype: a FastAPI backend, a Next.js dashboard, an in-memory spatial memory index, a conservative browser search helper, a grid-based vision fallback, and an optional Android ADB command bridge.
 
-## Critical self-critique and enhanced blueprint
+It is not a conscious system, not a general autonomous operator, and not a multimodal image-understanding model. The current implementation favors explicit safety checks, event logging, and testable behavior over broad claims.
 
-The initial architecture was intentionally broad. The implementation hardens it in several ways:
+## What is implemented
 
-- **Mobile streaming latency:** raw WebSocket frame forwarding can stutter under LAN jitter, so the bridge exposes adaptive telemetry, bitrate/FPS controls, and a decoupled input channel. The backend is structured so WebRTC or scrcpy H.264 forwarding can replace MJPEG-like frame transport without changing the UI contract.
-- **Agent race conditions:** all tasks flow through a coordinator, policy gate, task registry, and serialized event bus. Risky actions enter `requires_confirmation` instead of running concurrently.
-- **Browser-account safety:** Noor OS does not implement CAPTCHA bypass, anti-bot evasion, or covert automation. Playwright runs in persistent, user-visible profiles with rate limits and checkpoint detection.
-- **Vector-memory sprawl:** memories are assigned to spatial realms by semantic keywords and deterministic coordinates, giving stable 3D layouts while supporting future embedding-based clustering.
-- **WebGL rendering drops:** the frontend separates the Three.js sphere, React Flow graph, and memory realm canvas into focused components using bounded node counts, CSS GPU transforms, and state stores.
-- **Operational resilience:** service health checks, migration bootstrap, Docker Compose, and a one-click launcher are included.
+- **Coordinator:** receives commands, evaluates policy risk, chooses a simple route, executes it, publishes events, and records task episodes.
+- **Policy gate:** classifies requests using intent, context, action class, and confidence. High-risk user-visible or destructive actions pause for confirmation.
+- **Memory:** stores memories in realms, prevents exact duplicate records, ranks search across title/content/tags, and keeps deterministic spatial coordinates.
+- **Browser helper:** performs a rate-limited DuckDuckGo HTML search through Playwright when browser automation is enabled. It does not bypass login, CAPTCHA, or anti-bot controls.
+- **Vision fallback:** validates frame metadata and returns a 3x3 grid target estimate from directional words. It does not identify visual objects without a real multimodal adapter.
+- **Mobile bridge:** builds constrained ADB commands for device scan, tap, text, and wake actions. It validates arguments, times out hung commands, and reports failures explicitly.
+- **WebSocket event bus:** publishes bounded event history to allowed origins configured by environment variables.
+- **Cognitive core:** stores validated evidence, revisable beliefs, world relations, goals, predictions, outcome errors, learning statistics, and bounded autonomy ticks in JSON persistence. It is still a prototype, not consciousness.
 
 ## Quick start
 
@@ -31,8 +33,7 @@ python start.py --mode local
 - Backend: http://localhost:8000
 - Frontend: http://localhost:3000
 - API docs: http://localhost:8000/docs
-- Qdrant: http://localhost:6333
 
 ## Safety model
 
-High-risk actions such as public posting, destructive file operations, shell execution, mobile input injection, and account changes require explicit policy approval. The browser engine pauses for login, MFA, CAPTCHA, and suspicious-activity checkpoints.
+Defaults are intentionally conservative. Browser and mobile automation can be disabled by configuration. CORS and WebSocket origins default to localhost frontend origins. Public posting and destructive operations should remain behind explicit confirmation and additional application-specific checks.

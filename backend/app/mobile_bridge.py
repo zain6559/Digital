@@ -3,6 +3,8 @@ import logging
 import os
 import shutil
 import signal
+import shlex
+from .config import settings
 from .schemas import DeviceCommand, Event
 from .self_healing import self_healing_executor
 from .websocket import bus
@@ -34,7 +36,15 @@ class MobileBridge:
             finally:
                 await proc.wait()
 
+    def _validate_args(self, args):
+        if not settings.noor_enable_mobile_bridge:
+            raise RuntimeError('mobile bridge is disabled by configuration')
+        if not args or any(not isinstance(a, str) or not a or '\x00' in a for a in args):
+            raise ValueError('invalid adb argument')
+        return [str(a) for a in args]
+
     async def run(self, *args, timeout: float = 15.0):
+        args = self._validate_args(args)
         kwargs = {'stdout': asyncio.subprocess.PIPE, 'stderr': asyncio.subprocess.PIPE}
         if os.name != 'nt':
             kwargs['preexec_fn'] = os.setsid
@@ -43,7 +53,7 @@ class MobileBridge:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             await self._terminate(proc)
-            raise RuntimeError(f'adb command timed out: {" ".join(args)}')
+            raise RuntimeError(f'adb command timed out after {timeout:.1f}s: {shlex.join(args)}')
         except Exception:
             await self._terminate(proc)
             raise
@@ -72,11 +82,11 @@ class MobileBridge:
                 y = max(0, min(int(y), 4320))
                 return serial + ['shell', 'input', 'tap', str(x), str(y)]
         if c.action == 'text' and c.text:
-            safe = c.text.replace('%', '').replace(' ', '%s')[:512]
+            safe = '%s'.join(''.join(ch for ch in c.text if ch.isprintable()).replace('%', '').split())[:256]
             return serial + ['shell', 'input', 'text', safe]
         if c.action == 'wake':
             return serial + ['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']
-        raise ValueError('unsupported mobile command')
+        raise ValueError(f'unsupported or incomplete mobile command: {c.action}')
 
     async def command(self, c: DeviceCommand):
         async def attempt(_attempt: int, recovery_plan):

@@ -21,6 +21,12 @@ class SelfHealingExecutor:
         self.max_attempts = max_attempts
         self.timeout_seconds = timeout_seconds
 
+    def _valid_plan(self, plan: dict[str, Any] | None) -> bool:
+        if not plan or not isinstance(plan, dict):
+            return False
+        region = plan.get('target_region')
+        return bool(region and region.get('center') and plan.get('confidence', 0) >= 0.3)
+
     async def run(self, name: str, action: Callable[[int, dict[str, Any] | None], Awaitable[Any]], source: str, objective: str) -> RecoveryResult:
         recovery_plan: dict[str, Any] | None = None
         last_error: str | None = None
@@ -35,8 +41,9 @@ class SelfHealingExecutor:
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning('self-healing attempt failed for %s attempt=%s error=%s', name, attempt, last_error)
-                recovery_plan = await vision_engine.inspect(source, objective)
-                await bus.publish(Event(type='recovery.visual_reinspect', payload={'name': name, 'error': last_error, 'plan': recovery_plan}))
+                candidate = await vision_engine.inspect(source, objective)
+                recovery_plan = candidate if self._valid_plan(candidate) else None
+                await bus.publish(Event(type='recovery.visual_reinspect', payload={'name': name, 'error': last_error, 'plan': recovery_plan, 'plan_valid': recovery_plan is not None}))
                 await asyncio.sleep(min(2.0, 0.2 * attempt))
         await bus.publish(Event(type='recovery.failed', payload={'name': name, 'error': last_error, 'attempts': self.max_attempts}))
         return RecoveryResult(ok=False, attempts=self.max_attempts, error=last_error or 'unknown failure', recovery_plan=recovery_plan)

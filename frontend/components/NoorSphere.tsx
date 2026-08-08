@@ -1,0 +1,89 @@
+'use client';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { OrbitControls, Stars } from '@react-three/drei';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as THREE from 'three';
+
+function useAudioEnergy() {
+  const [energy, setEnergy] = useState(0);
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    if (!enabled) return;
+    let raf = 0;
+    let context: AudioContext | undefined;
+    let stream: MediaStream | undefined;
+    async function boot() {
+      if (!navigator.mediaDevices?.getUserMedia) return;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        context = new AudioContext();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 256;
+        context.createMediaStreamSource(stream).connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        const tick = () => {
+          analyser.getByteFrequencyData(data);
+          setEnergy(data.reduce((a, b) => a + b, 0) / (data.length * 255));
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch {
+        setEnergy(0.08);
+      }
+    }
+    void boot();
+    return () => {
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((track) => track.stop());
+      void context?.close();
+    };
+  }, [enabled]);
+  return { energy, enabled, setEnabled };
+}
+
+function Core({ status, energy }: { status: string; energy: number }) {
+  const mesh = useRef<THREE.Mesh>(null);
+  const geometry = useMemo(() => new THREE.SphereGeometry(1.35, 64, 64), []);
+  const material = useMemo(() => new THREE.MeshStandardMaterial({ color: '#3B82F6', emissive: '#3B82F6', wireframe: true, transparent: true, opacity: 0.78 }), []);
+  useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
+  useFrame((_, delta) => {
+    if (!mesh.current) return;
+    const color = status === 'error' ? '#EF4444' : status === 'executing' ? '#00E5FF' : '#3B82F6';
+    material.color.set(color);
+    material.emissive.set(color);
+    material.emissiveIntensity = 1.1 + energy * 3;
+    mesh.current.rotation.y += delta * (status === 'executing' ? 1.6 : 0.35 + energy);
+    mesh.current.scale.setScalar((status === 'error' ? 1.15 : 1) + energy * 0.42);
+  });
+  return <mesh ref={mesh} geometry={geometry} material={material} />;
+}
+
+function Particles({ energy }: { energy: number }) {
+  const pts = useRef<THREE.Points>(null);
+  const geometry = useMemo(() => {
+    const pos = new Float32Array(1200);
+    for (let i = 0; i < 400; i += 1) {
+      const r = 2 + Math.random() * 2.8;
+      const t = Math.random() * Math.PI * 2;
+      const p = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(p) * Math.cos(t);
+      pos[i * 3 + 1] = r * Math.sin(p) * Math.sin(t);
+      pos[i * 3 + 2] = r * Math.cos(p);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    return g;
+  }, []);
+  const material = useMemo(() => new THREE.PointsMaterial({ color: '#00E5FF', size: 0.025 }), []);
+  useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
+  useFrame((_, delta) => {
+    material.size = 0.018 + energy * 0.05;
+    if (pts.current) pts.current.rotation.z += delta * (0.08 + energy * 0.45);
+  });
+  return <points ref={pts} geometry={geometry} material={material} />;
+}
+
+export default function NoorSphere({ status }: { status: string }) {
+  const { energy, enabled, setEnabled } = useAudioEnergy();
+  return <div className="h-full min-h-[360px]"><Canvas camera={{ position: [0, 0, 6] }}><ambientLight intensity={0.4} /><pointLight position={[5, 5, 5]} intensity={3 + energy * 4} /><Stars radius={40} depth={20} count={900} /><Core status={status} energy={energy} /><Particles energy={energy} /><OrbitControls enablePan={false} /></Canvas><div className="px-4 pb-3 text-xs text-cyan-200 flex justify-between"><span>Audio spectrum energy: {(energy * 100).toFixed(0)}%</span><button className="rounded bg-cyan-400/10 px-2" onClick={() => setEnabled(!enabled)}>{enabled ? 'Disable audio' : 'Enable audio'}</button></div></div>;
+}

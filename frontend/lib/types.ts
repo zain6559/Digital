@@ -1,0 +1,1 @@
+export type NoorEvent={type:string;payload:Record<string,unknown>;ts:string}; export type MemoryNode={id:string;title:string;content:string;realm:string;position:{x:number;y:number;z:number};brightness:number;created_at:string};

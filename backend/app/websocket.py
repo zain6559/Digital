@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from fastapi import WebSocket
+from .config import settings
 from .schemas import Event
 
 logger = logging.getLogger('noor.websocket')
@@ -12,7 +13,14 @@ class EventBus:
         self.history_limit = history_limit
         self.lock = asyncio.Lock()
 
+    def _origin_allowed(self, origin: str | None) -> bool:
+        allowed = [o.strip() for o in settings.noor_ws_allowed_origins.split(',') if o.strip()]
+        return not origin or origin in allowed
+
     async def connect(self, ws: WebSocket):
+        if not self._origin_allowed(ws.headers.get('origin')):
+            await ws.close(code=1008)
+            raise RuntimeError('websocket origin not allowed')
         await ws.accept()
         async with self.lock:
             self.clients.add(ws)

@@ -1,0 +1,11 @@
+.env
+__pycache__/
+.pytest_cache/
+node_modules/
+.next/
+dist/
+build/
+*.pyc
+.coverage
+.local_data/
+playwright_profiles/

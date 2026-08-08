@@ -1,0 +1,149 @@
+import asyncio
+import base64
+import sys
+from pathlib import Path
+from app.agents import Coordinator
+from app.llm_client import LocalLLMClient
+from app.mobile_bridge import MobileBridge
+from app.policy import policy_gate
+from app.schemas import CommandRequest, MemoryIn, Risk
+from app.memory import SpatialMemoryAgent
+from app.vision import VisionFrame, LiveVisionContextEngine
+from app.self_healing import SelfHealingExecutor
+
+
+def test_policy_blocks_high_risk_actions():
+    risk, confirm, _ = policy_gate.assess('delete this account security settings')
+    assert risk is Risk.high
+    assert confirm is True
+
+
+def test_spatial_memory_assigns_realms_and_coordinates():
+    agent = SpatialMemoryAgent()
+    memory = agent.add(MemoryIn(title='Android ADB screen', content='mobile phone notification screen', tags=['adb'], importance=9))
+    assert memory.realm == 'Mobile Systems World'
+    assert {'x', 'y', 'z'} == set(memory.position)
+    assert 0.0 < memory.brightness <= 1.0
+
+
+def test_memory_boundary_distribution_has_low_coordinate_collision_rate():
+    agent = SpatialMemoryAgent()
+    coords = set()
+    for i in range(300):
+        mem = agent.add(MemoryIn(title=f'code file {i}', content=f'repo api function boundary {i}', importance=(i % 10) + 1))
+        coords.add((mem.position['x'], mem.position['y'], mem.position['z']))
+    assert len(coords) > 285
+
+
+def test_vision_handles_bad_base64_zero_dimensions_and_4k_scaling():
+    async def run():
+        engine = LiveVisionContextEngine(max_frames=2)
+        bad = await engine.ingest(VisionFrame(source='mobile', width=-10, height=0, mime='image/png', data_base64='bad!!'))
+        assert bad['width'] == 1
+        assert bad['height'] == 1
+        assert len(bad['regions']) == 9
+        huge = await engine.ingest(VisionFrame(source='mobile', width=7680, height=4320, mime='image/png', data_base64=''))
+        assert huge['width'] * huge['height'] <= engine.max_pixels
+        inspected = await engine.inspect('mobile', 'tap top right button')
+        assert inspected['target_region']['label'] == 'top-right'
+    asyncio.run(run())
+
+
+def test_self_healing_recovers_after_failure():
+    async def run():
+        attempts = {'count': 0}
+        engine_payload = base64.b64encode(b'frame').decode()
+        from app.vision import vision_engine
+        await vision_engine.ingest(VisionFrame(source='desktop', width=300, height=300, mime='image/png', data_base64=engine_payload))
+        async def action(_attempt, plan):
+            attempts['count'] += 1
+            if attempts['count'] == 1:
+                raise RuntimeError('selector drift')
+            return {'plan': plan}
+        result = await SelfHealingExecutor(max_attempts=2).run('test', action, 'desktop', 'click middle center')
+        assert result.ok is True
+        assert result.attempts == 2
+        assert result.result['plan']['target_region']['label'] == 'middle-center'
+    asyncio.run(run())
+
+
+def test_orchestrator_high_concurrency_policy_interventions():
+    async def run():
+        coordinator = Coordinator()
+        prompts = [CommandRequest(prompt=f'remember code memory {i}') for i in range(40)]
+        prompts += [CommandRequest(prompt=f'delete account setting {i}') for i in range(15)]
+        results = await asyncio.gather(*(coordinator.execute(p) for p in prompts))
+        assert len(results) == 55
+        assert sum(r.status.value == 'waiting_user' for r in results) == 15
+        assert len(await coordinator.list_tasks()) == 55
+    asyncio.run(run())
+
+
+def test_adb_timeout_forces_process_exit(tmp_path, monkeypatch):
+    sleeper = tmp_path / 'adb'
+    sleeper.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(30)\n')
+    sleeper.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path))
+    async def run():
+        bridge = MobileBridge()
+        try:
+            await bridge.run('devices', timeout=0.1)
+        except RuntimeError as exc:
+            assert 'timed out' in str(exc)
+        else:
+            raise AssertionError('timeout did not raise')
+    asyncio.run(run())
+
+
+def test_llm_stream_parser_repairs_malformed_lines():
+    client = LocalLLMClient(base_url='http://localhost:1')
+    assert client._parse_line('data: [DONE]').done is True
+    assert client._parse_line('not-json').raw['malformed'] is True
+    parsed = client._parse_line('{"choices":[{"delta":{"content":"hi"}}]}')
+    assert parsed.text == 'hi'
+
+
+def test_hybrid_routing_local_vs_cloud(monkeypatch):
+    from app import llm_client as module
+    monkeypatch.setattr(module.settings, 'llm_mode', 'hybrid')
+    monkeypatch.setattr(module.settings, 'openai_api_key', 'sk-test')
+    monkeypatch.setattr(module.settings, 'anthropic_api_key', '')
+    monkeypatch.setattr(module.settings, 'gemini_api_key', '')
+    client = module.HybridLLMClient(base_url='http://localhost:1')
+    assert client.route('summarize UI logs', risk='low').provider.value == 'local'
+    assert client.route('security audit policy analysis', risk='high').provider.value == 'openai'
+
+
+def test_hybrid_routing_cloud_without_key_falls_back_to_local(monkeypatch):
+    from app import llm_client as module
+    monkeypatch.setattr(module.settings, 'llm_mode', 'cloud')
+    monkeypatch.setattr(module.settings, 'openai_api_key', '')
+    monkeypatch.setattr(module.settings, 'anthropic_api_key', '')
+    monkeypatch.setattr(module.settings, 'gemini_api_key', '')
+    client = module.HybridLLMClient(base_url='http://localhost:1')
+    decision = client.route('deep research task', risk='high')
+    assert decision.provider.value == 'local'
+    assert 'no API key' in decision.reason
+
+
+def test_provider_payload_normalization_for_tool_and_vision_shapes():
+    client = LocalLLMClient(base_url='http://localhost:1')
+    openai = client._normalize_payload({'choices': [{'delta': {'content': 'ok', 'tool_calls': [{'id': 'tool'}]}}]}, 'openai')
+    assert openai.text == 'ok'
+    assert openai.tool_calls[0]['id'] == 'tool'
+    anthropic = client._normalize_payload({'type': 'content_block_delta', 'delta': {'text': 'hello'}}, 'anthropic')
+    assert anthropic.text == 'hello'
+    gemini = client._normalize_payload({'candidates': [{'content': {'parts': [{'text': 'vision'}, {'functionCall': {'name': 'inspect'}}]}, 'finishReason': 'STOP'}]}, 'gemini')
+    assert gemini.text == 'vision'
+    assert gemini.tool_calls[0]['name'] == 'inspect'
+    assert gemini.done is True
+
+
+def test_local_failure_can_fallback_without_leaking_api_key(monkeypatch):
+    from app import llm_client as module
+    monkeypatch.setattr(module.settings, 'llm_mode', 'hybrid')
+    monkeypatch.setattr(module.settings, 'openai_api_key', 'sk-secret-value')
+    monkeypatch.setattr(module.settings, 'hybrid_fallback_enabled', True)
+    client = module.HybridLLMClient(base_url='http://localhost:1')
+    assert client._is_local_failure_retryable(RuntimeError('CUDA OOM')) is True
+    assert 'sk-secret-value' not in str(client.route('security audit', risk='high'))

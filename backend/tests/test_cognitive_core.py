@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import pytest
 from app.cognitive_core import CognitiveCore
 
@@ -128,3 +129,111 @@ def test_frontend_and_readme_do_not_claim_consciousness():
     forbidden = ['consciousness = true','self-aware = true','i feel','aware entity']
     assert all(term not in text for term in forbidden)
     assert 'prototype' in (root/'README.md').read_text().lower()
+
+
+def test_semantic_belief_normalization_clusters_aliases_and_contradictions(tmp_path):
+    c=core(tmp_path)
+    c.ingest_evidence('device is ready','manual','user',0.9,'supports',0.8)
+    c.ingest_evidence('the device has state ok','telemetry','telemetry',0.9,'supports',0.8)
+    assert len(c.beliefs) == 1
+    b=next(iter(c.beliefs.values()))
+    assert len(b.aliases) == 2
+    c.ingest_evidence('device is broken','repair_log','telemetry',0.9,'supports',0.8)
+    assert len(c.beliefs) == 1
+    assert b.contradiction_count == 1
+    assert c.meta_state('device is not ready') in {'contradictory','suspended','uncertain','rejected'}
+
+
+def test_world_model_typed_relations_and_ambiguous_state(tmp_path):
+    c=core(tmp_path)
+    c.ingest_evidence('rain causes wet_ground after storm','weather.gov','browser',None,'supports',0.8)
+    rel=next(r for r in c.world.values() if r.relation == 'causes')
+    assert rel.relation_type == 'causal'
+    assert rel.temporal_hint == 'ordered'
+    assert rel.evidence
+    c.ingest_evidence('maybe unclear','note','user',0.5,'supports',0.4)
+    ambiguous=[r for r in c.world.values() if r.state == 'ambiguous']
+    assert ambiguous and ambiguous[0].relation == 'states'
+
+
+def test_inquiry_uses_importance_contradiction_and_cost(tmp_path):
+    c=core(tmp_path)
+    assert c.evaluate_inquiry('unknown low value',0.1)['action'] in {'defer','ask_human'}
+    assert c.evaluate_inquiry('unknown high value',0.9)['action'] == 'search'
+    c.ingest_evidence('device is ready','manual','user',0.9,'supports',0.8)
+    c.ingest_evidence('device is broken','sensor','telemetry',0.9,'supports',0.8)
+    assert c.evaluate_inquiry('device is ready',0.4)['action'] == 'search'
+    assert c.evaluate_inquiry('unknown expensive',0.6,search_cost=0.9)['action'] != 'search'
+
+
+def test_browser_evidence_scoring_dedupes_and_bad_sources_are_weak(tmp_path):
+    good=core(tmp_path)
+    good.run_inquiry_results('x is documented',[{'title':'Official X docs','url':'https://docs.example.test/x','content':'official manual evidence'}])
+    good_conf=next(iter(good.beliefs.values())).confidence
+    bad=core(tmp_path/'bad')
+    bad.run_inquiry_results('x is documented',[{'title':'Rumor docs about X','url':'https://spam.example/x','content':'thin unofficial manual evidence '*20}])
+    bad_conf=next(iter(bad.beliefs.values())).confidence
+    assert good_conf > bad_conf
+    dedupe=core(tmp_path/'dedupe')
+    ev=dedupe.run_inquiry_results('y is documented',[
+        {'title':'Official Y docs','url':'https://docs.example.test/y','content':'official manual evidence'},
+        {'title':'Official Y docs copy','url':'https://docs.example.test/y2','content':'official manual evidence'},
+    ])
+    assert len(ev) == 1
+    assert dedupe.meta_state('y is documented') != 'known'
+
+
+def test_search_failure_is_observable_and_low_value_rejected(tmp_path):
+    c=core(tmp_path)
+    with pytest.raises(ValueError):
+        c.run_inquiry_results('z fact',[{'title':'', 'url':'https://example.test/z'}])
+    assert c.events[-1]['type'] == 'inquiry.search_failed'
+    assert not c.beliefs
+
+
+def test_self_model_differs_by_domain_and_flags_weakness(tmp_path):
+    c=core(tmp_path)
+    pm=c.create_prediction('mobile tap','wake',0.8,[])
+    c.record_outcome(pm.id,'no_wake')
+    pb=c.create_prediction('browser search','results',0.8,[])
+    c.record_outcome(pb.id,'results')
+    sm=c.self_model()
+    assert sm['mobile']['mean_error'] > sm['browser']['mean_error']
+    assert sm['mobile']['should_ask_for_help'] is True
+    assert sm['browser']['strong'] is True
+
+
+def test_persistence_version_atomic_and_partial_write_does_not_corrupt(tmp_path, monkeypatch):
+    c=core(tmp_path)
+    c.ingest_evidence('device ready','manual','user',0.8,'supports',0.8)
+    path=c.path
+    original=path.read_text()
+    real_replace=os.replace
+    def boom(src, dst):
+        raise RuntimeError('simulated partial write')
+    monkeypatch.setattr(os, 'replace', boom)
+    with pytest.raises(RuntimeError):
+        c.save()
+    monkeypatch.setattr(os, 'replace', real_replace)
+    assert path.read_text() == original
+    c2=core(tmp_path)
+    assert c2.version >= 1 and c2.beliefs
+
+
+def test_scheduler_idle_and_reason_codes_and_bounds(tmp_path):
+    c=core(tmp_path)
+    assert c.tick()['action'] == 'idle'
+    c.ingest_evidence('system uncertain state','seed','test',0.5,'supports',0.1)
+    out=c.tick()
+    assert out['checked'] <= c.limits['max_tick_checks']
+    assert out['reason_codes']
+
+
+def test_anti_fake_claim_invariants(tmp_path):
+    c=core(tmp_path)
+    assert c.self_model() == {}
+    with pytest.raises(ValueError):
+        c.ingest_evidence('', 'src')
+    with pytest.raises(ValueError):
+        c.run_inquiry_results('claim', [])
+    assert all(r.evidence for r in c.world.values())

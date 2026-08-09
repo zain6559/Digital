@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import time
 import pytest
 from app.cognitive_core import CognitiveCore
 
@@ -218,6 +219,20 @@ def test_persistence_version_atomic_and_partial_write_does_not_corrupt(tmp_path,
     assert path.read_text() == original
     c2=core(tmp_path)
     assert c2.version >= 1 and c2.beliefs
+
+
+def test_persistence_active_lock_is_explicit_and_stale_lock_recovers(tmp_path):
+    c=core(tmp_path)
+    c.ingest_evidence('state lock check','manual','test',0.8,'supports',0.8)
+    lock=c.path.with_suffix(c.path.suffix+'.lock')
+    lock.write_text('active')
+    with pytest.raises(RuntimeError, match='already in progress'):
+        c.save()
+    assert lock.exists()
+    old=time.time()-120
+    os.utime(lock, (old, old))
+    c.save()
+    assert not lock.exists()
 
 
 def test_scheduler_idle_and_reason_codes_and_bounds(tmp_path):

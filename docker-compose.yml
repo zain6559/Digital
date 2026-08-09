@@ -22,7 +22,12 @@ services:
   backend:
     build: ./backend
     env_file: .env
-    ports: ["${NOOR_BACKEND_PORT:-8000}:8000"]
+    ports: ["${NOOR_BACKEND_PORT:-8000}:${NOOR_BACKEND_PORT:-8000}"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:$${NOOR_BACKEND_PORT:-8000}/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
@@ -34,7 +39,8 @@ services:
     build: ./frontend
     env_file: .env
     ports: ["3000:3000"]
-    depends_on: [backend]
+    depends_on:
+      backend: { condition: service_healthy }
 volumes:
   postgres_data:
   qdrant_data:

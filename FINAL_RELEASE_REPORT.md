@@ -6,11 +6,12 @@ Noor OS is a local-first prototype release candidate. The release surface is lim
 
 ## What is ready and tested
 
-- Backend API startup, `/health`, command handling, memory writes, WebSocket bounded replay, disabled browser/mobile paths, persistence restart continuity, cognitive evidence-to-belief/world updates, plan/action/recovery/skill updates, procedure/transfer/benchmark/drift/debug records, and long-run tick stability are covered by automated tests.
+- Backend API startup, `/health`, command handling, memory writes, WebSocket bounded replay and origin rejection, disabled browser/mobile paths, persistence restart continuity, cognitive evidence-to-belief/world updates, plan/action/recovery/skill updates, procedure/transfer/benchmark/drift/debug records, and long-run tick stability are covered by automated tests.
 - Frontend production build is part of the release verification path.
 - Browser automation, mobile bridge, and cloud fallback are disabled by default in example/config settings and must be explicitly enabled.
 - CORS and WebSocket origins default to localhost frontend origins.
-- JSON cognitive persistence uses a versioned state file, temp-file replacement, and a lock guard.
+- JSON cognitive persistence uses a versioned state file, temp-file replacement, an active-lock guard, and stale-lock recovery.
+- Local startup preflights backend port conflicts. Docker startup maps the configured backend host port to the same configured in-container port and waits on a backend healthcheck before starting the frontend.
 
 ## What remains prototype, heuristic, bounded, or fallback
 
@@ -34,6 +35,7 @@ Noor OS is a local-first prototype release candidate. The release surface is lim
 - A committed zip artifact was not appropriate for source release hygiene. It was removed and zip files are ignored.
 - Frontend dependency audit initially reported vulnerable packages. Next/React/React Three/PostCSS/ESLint packages were upgraded and `npm audit --audit-level=moderate` now reports zero vulnerabilities.
 - The release needed end-to-end smoke coverage beyond isolated unit tests. Final smoke tests now exercise command/policy/execution/events, evidence/belief/world, plan/action/recovery/skill, browser evidence scoring, tick behavior, WebSocket bounded replay, and persistence restart continuity.
+- Final hostile review found three remaining release risks: origin-less WebSocket connections were accepted, Docker custom backend ports could map to the wrong in-container port, and a stale cognitive persistence lock could block recovery. These were fixed with origin-required WebSocket validation, symmetric Docker port mapping plus healthcheck gating, and tested stale-lock recovery.
 
 ## Release score
 

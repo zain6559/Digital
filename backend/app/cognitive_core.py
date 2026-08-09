@@ -123,11 +123,24 @@ class CognitiveCore:
         data={name:{k:asdict(v) for k,v in getattr(self,name).items()} for name in ['evidence','beliefs','world','predictions','goals','plans','actions','skills','tools','failures','subgoals','procedures','transfers','benchmarks','debug_records','task_templates']}
         data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests,'operational_memory':self.operational_memory[-500:],'drift_signals':self.drift_signals}
         self.path.parent.mkdir(parents=True,exist_ok=True); tmp=self.path.with_suffix(self.path.suffix+'.tmp'); lock=self.path.with_suffix(self.path.suffix+'.lock')
-        fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        fd=None
+        try:
+            fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age=time.time()-lock.stat().st_mtime
+            except FileNotFoundError:
+                age=0
+            if age <= 30:
+                self._append_event('state.save_blocked', {'reason':'active_lock','lock':str(lock)})
+                raise RuntimeError(f'cognitive state save is already in progress: {lock}')
+            lock.unlink(missing_ok=True)
+            fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
         try:
             Path(tmp).write_text(json.dumps(data,ensure_ascii=False,indent=2)); os.replace(tmp,self.path)
         finally:
-            os.close(fd); Path(lock).unlink(missing_ok=True); Path(tmp).unlink(missing_ok=True)
+            if fd is not None: os.close(fd)
+            Path(lock).unlink(missing_ok=True); Path(tmp).unlink(missing_ok=True)
     def _belief_id(self, proposition): return cid('b_', normalize_text(proposition)['canonical'])
     def _find_equiv(self,n):
         s=set(n['terms'])

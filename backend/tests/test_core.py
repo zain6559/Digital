@@ -217,6 +217,7 @@ def test_event_bus_origin_and_history():
     from app.websocket import EventBus
     bus2 = EventBus(history_limit=2)
     assert bus2._origin_allowed('http://localhost:3000') is True
+    assert bus2._origin_allowed(None) is False
     assert bus2._origin_allowed('http://evil.example') is False
     async def run():
         await bus2.publish(Event(type='one', payload={}))
@@ -232,6 +233,13 @@ def test_backend_smoke_health_and_command():
     with TestClient(app) as client:
         health = client.get('/health')
         assert health.status_code == 200
+        assert health.json()['safe_defaults']['browser_automation'] is False
+        assert health.json()['safe_defaults']['mobile_bridge'] is False
+        assert health.json()['persistence']['status'] in {'ok', 'locked'}
+        diag = client.get('/diagnostics')
+        assert diag.status_code == 200
+        assert diag.json()['event_bus']['history_limit'] >= 1
+        assert 'belief_revisions' in diag.json()['cognitive']
         res = client.post('/api/command', json={'prompt': 'remember api smoke test', 'context': {}})
         assert res.status_code == 200
         assert res.json()['status'] == 'completed'

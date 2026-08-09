@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, os, shutil, signal, subprocess, sys, time, urllib.request
+import argparse, os, shutil, signal, socket, subprocess, sys, time, urllib.request
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
 
@@ -23,6 +23,19 @@ def require(name, hint):
     if not shutil.which(name): raise SystemExit(hint)
 def _backend_host_port():
     return os.environ.get('NOOR_BACKEND_HOST','0.0.0.0'), os.environ.get('NOOR_BACKEND_PORT','8000')
+def _assert_free_port(host, port):
+    bind_host = '127.0.0.1' if host in {'0.0.0.0', '::'} else host
+    try:
+        port_number=int(port)
+    except ValueError:
+        raise SystemExit(f'Invalid NOOR_BACKEND_PORT={port!r}; expected an integer TCP port.')
+    if not 1 <= port_number <= 65535:
+        raise SystemExit(f'Invalid NOOR_BACKEND_PORT={port!r}; expected a TCP port from 1 to 65535.')
+    try:
+        with socket.create_connection((bind_host, port_number), timeout=0.5):
+            raise SystemExit(f'Backend port {port} is already in use on {bind_host}. Stop the existing service or run with NOOR_BACKEND_PORT=<free-port>.')
+    except (ConnectionRefusedError, OSError):
+        return
 def docker_mode():
     require('docker','Docker is required for --mode docker'); ensure_env(); run(['docker','compose','up','-d','--build'])
     _host, port = _backend_host_port()
@@ -42,6 +55,7 @@ def local_mode():
     ensure_env(); require('npm','npm is required for --mode local')
     run([sys.executable,'-m','pip','install','-r','backend/requirements.txt']); run(['npm','install'],cwd=ROOT/'frontend')
     host, port = _backend_host_port()
+    _assert_free_port(host, port)
     children=[subprocess.Popen([sys.executable,'-m','uvicorn','app.main:app','--reload','--host',host,'--port',port],cwd=ROOT/'backend'), subprocess.Popen(['npm','run','dev'],cwd=ROOT/'frontend')]
     def stop(_sig=None,_frame=None): print('\n[noor] stopping services...', flush=True); terminate(children); sys.exit(0)
     signal.signal(signal.SIGTERM, stop); signal.signal(signal.SIGINT, stop)

@@ -20,7 +20,35 @@ async def lifespan(app: FastAPI):
 app=FastAPI(title='Noor OS API', version='1.0.0', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=_csv(settings.noor_cors_origins), allow_credentials=False, allow_methods=['GET','POST'], allow_headers=['content-type','authorization'])
 @app.get('/health')
-async def health(): return {'status':'ok','service':'noor-backend','environment':settings.noor_env}
+async def health():
+    persistence = cognitive_core.persistence_status()
+    return {
+        'status': 'ok' if persistence['status'] == 'ok' else 'degraded',
+        'service': 'noor-backend',
+        'environment': settings.noor_env,
+        'safe_defaults': {
+            'browser_automation': settings.noor_enable_browser_automation,
+            'mobile_bridge': settings.noor_enable_mobile_bridge,
+            'cloud_fallback': settings.hybrid_fallback_enabled,
+            'public_posting': settings.noor_enable_public_posting,
+        },
+        'persistence': persistence,
+        'limits': {'websocket_history': bus.history_limit, 'cognitive_events': cognitive_core.limits['max_events']},
+    }
+@app.get('/diagnostics')
+async def diagnostics():
+    return {
+        'service': 'noor-backend',
+        'environment': settings.noor_env,
+        'features': {
+            'browser_automation_enabled': settings.noor_enable_browser_automation,
+            'mobile_bridge_enabled': settings.noor_enable_mobile_bridge,
+            'cloud_fallback_enabled': settings.hybrid_fallback_enabled,
+            'public_posting_enabled': settings.noor_enable_public_posting,
+        },
+        'event_bus': bus.stats(),
+        'cognitive': cognitive_core.metrics_snapshot(),
+    }
 @app.post('/api/command')
 async def command(req:CommandRequest): return await coordinator.execute(req)
 @app.get('/api/tasks')

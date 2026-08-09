@@ -15,7 +15,7 @@ class EventBus:
 
     def _origin_allowed(self, origin: str | None) -> bool:
         allowed = [o.strip() for o in settings.noor_ws_allowed_origins.split(',') if o.strip()]
-        return not origin or origin in allowed
+        return bool(origin) and origin in allowed
 
     async def connect(self, ws: WebSocket):
         if not self._origin_allowed(ws.headers.get('origin')):
@@ -35,6 +35,9 @@ class EventBus:
 
     def disconnect(self, ws: WebSocket):
         self.clients.discard(ws)
+
+    def stats(self):
+        return {'clients': len(self.clients), 'history': len(self.history), 'history_limit': self.history_limit}
 
     async def publish(self, event: Event):
         async with self.lock:

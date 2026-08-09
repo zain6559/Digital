@@ -4,7 +4,6 @@ import dynamic from 'next/dynamic';
 import CommandConsole from '../components/CommandConsole';
 import CosmicBackground from '../components/CosmicBackground';
 import FloatingNodeGraph from '../components/FloatingNodeGraph';
-import GlassPanel from '../components/GlassPanel';
 import MobileMirror from '../components/MobileMirror';
 import OrbitalLabel from '../components/OrbitalLabel';
 const AgentGraph = dynamic(() => import('../components/AgentGraph'), { ssr: false });
@@ -19,6 +18,7 @@ function flagValue(health: Record<string, unknown> | null, key: string) {
   const value = flags?.[key];
   return typeof value === 'boolean' ? (value ? 'enabled' : 'disabled') : 'unknown';
 }
+const safeFlags = [['browser_automation', 'Browser'], ['mobile_bridge', 'Mobile'], ['cloud_fallback', 'Cloud'], ['public_posting', 'Posting']];
 
 export default function Home() {
   const push = useNoorStore((s) => s.push);
@@ -56,12 +56,16 @@ export default function Home() {
     return () => { closed = true; ws?.close(); };
   }, [push, setMemories]);
 
-  return <main className="relative min-h-screen overflow-hidden px-4 py-4 text-slate-100 sm:px-6 lg:px-8">
+  return <main className="relative min-h-screen overflow-hidden px-3 py-3 text-slate-100 sm:px-5">
     <CosmicBackground />
-    <div className="relative z-10 mx-auto flex max-w-[1800px] flex-col gap-4">
-      <header className="glass rounded-[2rem] px-4 py-3">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div><p className="hud-label">local-first cognitive operating layer</p><h1 className="text-3xl font-black tracking-tight text-cyan-50 text-bloom md:text-5xl">Noor OS Cognitive Cosmos</h1></div>
+    <section className="cosmos-stage relative z-10 mx-auto max-w-[1900px]">
+      <div className="cosmos-orbit left-1/2 top-1/2 hidden h-[84vh] w-[84vh] -translate-x-1/2 -translate-y-1/2 lg:block" />
+      <div className="cosmos-orbit left-1/2 top-1/2 hidden h-[62vh] w-[62vh] -translate-x-1/2 -translate-y-1/2 rotate-12 lg:block" />
+      <div className="cosmos-orbit left-1/2 top-1/2 hidden h-[44vh] w-[44vh] -translate-x-1/2 -translate-y-1/2 -rotate-12 lg:block" />
+
+      <header className="cosmos-layer top-hud floating-hud rounded-[2rem] px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div><p className="hud-label">live cognitive field</p><h1 className="text-3xl font-black tracking-tight text-cyan-50 text-bloom md:text-5xl">Noor OS</h1></div>
           <div className="flex flex-wrap gap-2">
             <OrbitalLabel label="state" value={status} tone={status === 'error' ? 'amber' : status === 'executing' ? 'cyan' : 'emerald'} />
             <OrbitalLabel label="backend" value={String(health?.status ?? 'probing')} tone={health?.status === 'ok' ? 'emerald' : 'amber'} />
@@ -71,45 +75,43 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(280px,.74fr)_minmax(520px,1.45fr)_minmax(300px,.78fr)]">
-        <aside className="flex flex-col gap-4">
-          <GlassPanel eyebrow="runtime flags" title="Safe Defaults">
-            <div className="grid gap-2 text-xs">
-              {[['browser_automation', 'Browser automation'], ['mobile_bridge', 'Mobile bridge'], ['cloud_fallback', 'Cloud fallback'], ['public_posting', 'Public posting']].map(([key, label]) => <div key={key} className="flex items-center justify-between rounded-2xl border border-cyan-200/10 bg-black/20 px-3 py-2"><span>{label}</span><span className="text-cyan-200">{flagValue(health, key)}</span></div>)}
-            </div>
-          </GlassPanel>
-          <GlassPanel eyebrow="agent topology" title="AgentGraph">
-            <AgentGraph />
-          </GlassPanel>
-        </aside>
-
-        <section className="module-shell relative min-h-[720px] overflow-hidden rounded-[2.4rem] p-4">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(0,229,255,.16),transparent_28%),radial-gradient(circle_at_50%_45%,rgba(168,85,247,.10),transparent_48%)]" />
-          <div className="relative z-10 grid gap-4 lg:grid-rows-[1fr_auto]">
-            <div className="relative min-h-[430px]"><NoorSphere status={status} /><div className="pointer-events-none absolute inset-8 rounded-full border border-cyan-200/10" /><div className="pointer-events-none absolute inset-20 rounded-full border border-violet-200/10" /></div>
-            <FloatingNodeGraph memories={memories} events={events} />
-          </div>
-        </section>
-
-        <aside className="flex flex-col gap-4">
-          <MobileMirror />
-          <GlassPanel eyebrow="live telemetry" title="Event Signals">
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between rounded-2xl bg-black/20 px-3 py-2"><span>Memories</span><strong className="text-violet-200">{memories.length}</strong></div>
-              <div className="flex justify-between rounded-2xl bg-black/20 px-3 py-2"><span>Realms</span><strong className="text-cyan-200">{realms.length}</strong></div>
-              <div className="flex justify-between rounded-2xl bg-black/20 px-3 py-2"><span>Events</span><strong className="text-emerald-200">{events.length}</strong></div>
-              <div className="pt-2"><p className="hud-label mb-2">recent signal types</p><div className="flex flex-wrap gap-2">{recentTypes.length ? recentTypes.map((type) => <span key={type} className="orbital-chip rounded-full px-2 py-1 text-[10px] text-cyan-100">{type}</span>) : <span className="text-slate-400">Awaiting bus activity</span>}</div></div>
-            </div>
-          </GlassPanel>
-        </aside>
+      <section className="cosmos-layer core-zone portal-glow scanline overflow-hidden rounded-full">
+        <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_center,rgba(0,229,255,.22),transparent_30%),radial-gradient(circle_at_50%_50%,rgba(168,85,247,.12),transparent_54%)]" />
+        <NoorSphere status={status} />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]">
-        <GlassPanel eyebrow="memory galaxy" title="MemoryWorlds">
-          <MemoryWorlds memories={memories} />
-        </GlassPanel>
+      <section className="cosmos-layer inset-x-[8vw] top-[17vh] z-20 hidden h-[58vh] lg:block">
+        <FloatingNodeGraph memories={memories} events={events} />
+      </section>
+
+      <aside className="cosmos-layer flags-hud floating-hud rounded-[1.6rem] p-3 animate-drift">
+        <p className="hud-label mb-2">runtime flags</p>
+        <div className="flex flex-wrap gap-2 text-[11px]">{safeFlags.map(([key, label]) => <span key={key} className="orbital-chip rounded-full px-3 py-2"><span className="text-slate-300">{label}</span> <strong className="text-cyan-100">{flagValue(health, key)}</strong></span>)}</div>
+      </aside>
+
+      <aside className="cosmos-layer agent-hud constellation-panel rounded-[2rem] p-2 opacity-80 transition hover:opacity-100">
+        <div className="mb-2 ml-3"><p className="hud-label">faint agent topology</p><h2 className="text-sm font-semibold text-cyan-100 text-bloom">AgentGraph</h2></div>
+        <AgentGraph />
+      </aside>
+
+      <aside className="cosmos-layer memory-hud constellation-panel rounded-[2rem] p-2 opacity-90 transition hover:opacity-100">
+        <div className="mb-2 ml-3 flex items-end justify-between gap-2"><div><p className="hud-label">memory nebula</p><h2 className="text-sm font-semibold text-violet-100 text-bloom">MemoryWorlds</h2></div><span className="orbital-chip rounded-full px-3 py-1 text-[11px] text-violet-100">{realms.length} realms</span></div>
+        <MemoryWorlds memories={memories} />
+      </aside>
+
+      <aside className="cosmos-layer mobile-hud portal-glow">
+        <MobileMirror />
+      </aside>
+
+      <aside className="cosmos-layer telemetry-hud floating-hud rounded-[1.7rem] p-3">
+        <p className="hud-label mb-2">live signal stream</p>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs"><span className="orbital-chip rounded-2xl px-2 py-2"><strong className="block text-violet-200">{memories.length}</strong>mem</span><span className="orbital-chip rounded-2xl px-2 py-2"><strong className="block text-cyan-200">{realms.length}</strong>realms</span><span className="orbital-chip rounded-2xl px-2 py-2"><strong className="block text-emerald-200">{events.length}</strong>events</span></div>
+        <div className="mt-3 flex flex-wrap gap-2">{recentTypes.length ? recentTypes.map((type) => <span key={type} className="rounded-full bg-cyan-300/10 px-2 py-1 text-[10px] text-cyan-100">{type}</span>) : <span className="text-xs text-slate-400">Awaiting bus activity</span>}</div>
+      </aside>
+
+      <section className="cosmos-layer command-hud portal-glow">
         <CommandConsole />
       </section>
-    </div>
+    </section>
   </main>;
 }

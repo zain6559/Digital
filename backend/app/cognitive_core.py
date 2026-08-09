@@ -1,4 +1,4 @@
-import json, hashlib, time, os, re
+import json, hashlib, time, os, re, shutil
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -8,6 +8,7 @@ from .schemas import MemoryIn
 from .memory import SpatialMemoryAgent
 
 STATE_VERSION=4
+LOCK_STALE_SECONDS=30
 
 def now(): return datetime.now(UTC).isoformat()
 def cid(prefix: str, text: str) -> str: return prefix + hashlib.sha1(text.encode()).hexdigest()[:12]
@@ -111,33 +112,56 @@ class CognitiveCore:
             if ts & keys: return d
         return 'general'
     def _migrate(self,data): data.setdefault('version',1); return data
+    def _state_checksum(self, data: dict[str, Any]) -> str:
+        payload={k:v for k,v in data.items() if k!='__checksum'}
+        return hashlib.sha256(json.dumps(payload,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+    def _read_state_file(self, path: Path) -> dict[str, Any]:
+        data=json.loads(path.read_text())
+        checksum=data.get('__checksum')
+        if checksum and checksum != self._state_checksum(data):
+            raise ValueError(f'cognitive state checksum mismatch: {path}')
+        return data
     def load(self):
         if not self.path.exists(): return
-        try: data=self._migrate(json.loads(self.path.read_text()))
-        except Exception: self._append_event('state.load_failed',{}); return
+        try: data=self._migrate(self._read_state_file(self.path))
+        except Exception as exc:
+            backup=self.path.with_suffix(self.path.suffix+'.bak')
+            if backup.exists():
+                try:
+                    data=self._migrate(self._read_state_file(backup)); self._append_event('state.load_recovered_from_backup',{'error':type(exc).__name__,'backup':str(backup)})
+                except Exception as backup_exc:
+                    self._append_event('state.load_failed',{'error':type(exc).__name__,'backup_error':type(backup_exc).__name__}); return
+            else:
+                self._append_event('state.load_failed',{'error':type(exc).__name__}); return
         self.version=data.get('version',1)
         def filt(cls,v):
             names=cls.__dataclass_fields__.keys(); return cls(**{k:v for k,v in v.items() if k in names})
-        self.evidence={k:filt(EvidenceRecord,v) for k,v in data.get('evidence',{}).items()}; self.beliefs={k:filt(BeliefRecord,v) for k,v in data.get('beliefs',{}).items()}; self.world={k:filt(WorldRelation,v) for k,v in data.get('world',{}).items()}; self.predictions={k:filt(PredictionRecord,v) for k,v in data.get('predictions',{}).items()}; self.goals={k:filt(GoalRecord,v) for k,v in data.get('goals',{}).items()}; self.plans={k:filt(PlanRecord,v) for k,v in data.get('plans',{}).items()}; self.actions={k:filt(ActionRecord,v) for k,v in data.get('actions',{}).items()}; self.skills={k:filt(SkillRecord,v) for k,v in data.get('skills',{}).items()}; self.tools={k:filt(ToolProfile,v) for k,v in data.get('tools',{}).items()}; self.failures={k:filt(FailureRecord,v) for k,v in data.get('failures',{}).items()}; self.subgoals={k:filt(SubGoalRecord,v) for k,v in data.get('subgoals',{}).items()}; self.procedures={k:filt(ProcedureRecord,v) for k,v in data.get('procedures',{}).items()}; self.transfers={k:filt(TransferRecord,v) for k,v in data.get('transfers',{}).items()}; self.benchmarks={k:filt(BenchmarkRecord,v) for k,v in data.get('benchmarks',{}).items()}; self.debug_records={k:filt(DebugRecord,v) for k,v in data.get('debug_records',{}).items()}; self.task_templates={k:filt(TaskTemplateRecord,v) for k,v in data.get('task_templates',{}).items()}; self.drift_signals=data.get('drift_signals',{}); self.operational_memory=data.get('operational_memory',[]); self.unknowns=data.get('unknowns',{}); self.events=data.get('events',[])[:self.limits['max_events']]; self.source_stats=data.get('source_stats',{}); self.self_history=data.get('self_history',[]); self.tick_count=data.get('tick_count',0); self.browser_requests=data.get('browser_requests',0)
+        self.evidence={k:filt(EvidenceRecord,v) for k,v in data.get('evidence',{}).items()}; self.beliefs={k:filt(BeliefRecord,v) for k,v in data.get('beliefs',{}).items()}; self.world={k:filt(WorldRelation,v) for k,v in data.get('world',{}).items()}; self.predictions={k:filt(PredictionRecord,v) for k,v in data.get('predictions',{}).items()}; self.goals={k:filt(GoalRecord,v) for k,v in data.get('goals',{}).items()}; self.plans={k:filt(PlanRecord,v) for k,v in data.get('plans',{}).items()}; self.actions={k:filt(ActionRecord,v) for k,v in data.get('actions',{}).items()}; self.skills={k:filt(SkillRecord,v) for k,v in data.get('skills',{}).items()}; self.tools={k:filt(ToolProfile,v) for k,v in data.get('tools',{}).items()}; self.failures={k:filt(FailureRecord,v) for k,v in data.get('failures',{}).items()}; self.subgoals={k:filt(SubGoalRecord,v) for k,v in data.get('subgoals',{}).items()}; self.procedures={k:filt(ProcedureRecord,v) for k,v in data.get('procedures',{}).items()}; self.transfers={k:filt(TransferRecord,v) for k,v in data.get('transfers',{}).items()}; self.benchmarks={k:filt(BenchmarkRecord,v) for k,v in data.get('benchmarks',{}).items()}; self.debug_records={k:filt(DebugRecord,v) for k,v in data.get('debug_records',{}).items()}; self.task_templates={k:filt(TaskTemplateRecord,v) for k,v in data.get('task_templates',{}).items()}; self.drift_signals=data.get('drift_signals',{}); self.operational_memory=data.get('operational_memory',[]); self.unknowns=data.get('unknowns',{}); self.events=(data.get('events',[])+self.events)[-self.limits['max_events']:]; self.source_stats=data.get('source_stats',{}); self.self_history=data.get('self_history',[]); self.tick_count=data.get('tick_count',0); self.browser_requests=data.get('browser_requests',0)
     def save(self):
         data={name:{k:asdict(v) for k,v in getattr(self,name).items()} for name in ['evidence','beliefs','world','predictions','goals','plans','actions','skills','tools','failures','subgoals','procedures','transfers','benchmarks','debug_records','task_templates']}
         data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests,'operational_memory':self.operational_memory[-500:],'drift_signals':self.drift_signals}
-        self.path.parent.mkdir(parents=True,exist_ok=True); tmp=self.path.with_suffix(self.path.suffix+'.tmp'); lock=self.path.with_suffix(self.path.suffix+'.lock')
+        data['__checksum']=self._state_checksum(data)
+        self.path.parent.mkdir(parents=True,exist_ok=True); tmp=self.path.with_suffix(self.path.suffix+'.tmp'); lock=self.path.with_suffix(self.path.suffix+'.lock'); backup=self.path.with_suffix(self.path.suffix+'.bak')
         fd=None
-        try:
-            fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
-        except FileExistsError:
+        for _ in range(2):
             try:
-                age=time.time()-lock.stat().st_mtime
-            except FileNotFoundError:
-                age=0
-            if age <= 30:
-                self._append_event('state.save_blocked', {'reason':'active_lock','lock':str(lock)})
-                raise RuntimeError(f'cognitive state save is already in progress: {lock}')
-            lock.unlink(missing_ok=True)
-            fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+                fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+                break
+            except FileExistsError:
+                try:
+                    age=time.time()-lock.stat().st_mtime
+                except FileNotFoundError:
+                    continue
+                if age <= LOCK_STALE_SECONDS:
+                    self._append_event('state.save_blocked', {'reason':'active_lock','lock':str(lock)})
+                    raise RuntimeError(f'cognitive state save is already in progress: {lock}')
+                lock.unlink(missing_ok=True)
+        if fd is None: raise RuntimeError(f'could not acquire cognitive state lock: {lock}')
         try:
-            Path(tmp).write_text(json.dumps(data,ensure_ascii=False,indent=2)); os.replace(tmp,self.path)
+            with open(tmp,'w',encoding='utf-8') as handle:
+                json.dump(data,handle,ensure_ascii=False,indent=2); handle.write('\n'); handle.flush(); os.fsync(handle.fileno())
+            if self.path.exists() and self.path.is_file(): shutil.copy2(self.path,backup)
+            os.replace(tmp,self.path)
         finally:
             if fd is not None: os.close(fd)
             Path(lock).unlink(missing_ok=True); Path(tmp).unlink(missing_ok=True)
@@ -261,17 +285,22 @@ class CognitiveCore:
         self._append_event('life.tick',{'tick':self.tick_count,'action':action,'checked':checked,'reason_codes':reason});
         if self.tick_count%100==0: self.save()
         return {'tick':self.tick_count,'action':action,'checked':checked,'state':action,'reason_codes':reason,'events':len(self.events)}
-    def _score_result(self,r):
+    def _score_result(self,r, proposition=''):
         title=(r.get('title') or '').strip(); url=(r.get('url') or '').strip(); content=(r.get('content') or r.get('snippet') or '').strip();
         if not title or not url: return 0, 'missing_title_or_url'
-        host=urlparse(url).netloc.lower(); cred=self.source_credibility(url,'browser'); hints=len(set(tokens(title+' '+content)) & {'docs','documented','official','evidence','study','manual','spec'})*0.08
-        return clamp(0.15+cred*0.45+min(len(content),300)/3000+hints), host
+        host=urlparse(url).netloc.lower(); cred=self.source_credibility(url,'browser'); text_terms=set(tokens(title+' '+content)); query_terms=set(tokens(proposition))
+        coverage=len(text_terms & query_terms)/max(1,len(query_terms))
+        hints=len(text_terms & {'docs','documented','official','evidence','study','manual','spec','reference','standard','release','changelog'})*0.06
+        thin_penalty=0.12 if len(content)<40 else 0.0
+        low_cred_penalty=0.20 if cred<0.4 else 0.0
+        duplicate_penalty=0.10 if r.get('duplicate') else 0.0
+        return clamp(0.10+cred*0.42+min(len(content),500)/4000+coverage*0.22+hints-thin_penalty-low_cred_penalty-duplicate_penalty), host
     def run_inquiry_results(self, proposition, results):
         self.browser_requests+=1
         if not results: self._append_event('inquiry.search_failed',{'proposition':proposition,'reason':'empty_results'}); self.save(); raise ValueError('search cannot succeed without evidence')
         ev=[]; seen=set()
         for r in results:
-            score,reason=self._score_result(r); host=reason
+            score,reason=self._score_result(r, proposition); host=reason
             if score<0.38 or host in seen: continue
             seen.add(host); rel='supports'; ev.append(self.ingest_evidence(proposition,r.get('url') or 'browser','browser',None,rel,score,{'title':r.get('title'),'score':score}))
             st=self.source_stats.setdefault('source:'+host,{'observations':0,'reliability':self.source_credibility(r.get('url') or host,'browser')}); st['observations']+=1; st['reliability']=clamp((st['reliability']*(st['observations']-1)+score)/st['observations'])

@@ -9,24 +9,24 @@
 - World relations are backed by evidence ids and include typed relation state, confidence, temporal hints, and ambiguity handling.
 - Self-model output is derived from prediction/outcome history by domain and action type. It reports strengths, weaknesses, overconfidence risk, and help-seeking recommendations only when history exists.
 - Autonomy ticks are bounded by check count and time budget. Each tick records an action/state plus reason codes.
-- Persistence includes a state version, migration hook, atomic temp-file replacement, and a write lock guard.
+- Persistence includes a state version, migration hook, checksum validation, backup recovery, fsynced temp-file replacement, stale-lock recovery, and an active write lock guard.
 
 ## 2. What remains heuristic
 
 - Semantic belief normalization is intentionally lightweight. It uses canonical terms, aliases, relation hints, polarity, stop-word removal, and equivalence thresholds; it is not a full natural-language understanding system.
 - World extraction uses constrained lexical patterns for entities, relations, causes, and temporal hints. Ambiguous text is marked weak or ambiguous instead of being interpreted with false precision.
-- Source credibility is a practical scoring heuristic based on source type, URL/domain hints, result content hints, and source history. It is not a truth oracle.
+- Source credibility is a practical bounded scoring algorithm based on source type, URL/domain hints, source history, query coverage, content quality hints, thin-content penalties, low-credibility penalties, and deduplication. It is not a truth oracle.
 - Inquiry value-of-information is a transparent formula, not an optimal Bayesian planner.
 - Self-model domain detection uses domain/action hints from recorded predictions. It is inspectable but still prototype-level.
 
 ## 3. What is durable after restart
 
 - Evidence records, belief clusters, aliases, contradiction counts, audit trails, world relations, predictions, goals, unknowns, events, source statistics, self-history, browser request counts, tick count, and state version persist to JSON.
-- Restart consistency is protected by atomic write replacement and a lock file. Simulated partial write failure leaves the previous state readable.
+- Restart consistency is protected by checksum-validated state, backup recovery, fsynced atomic replacement, stale-lock recovery, and a lock file. Simulated partial write failure leaves the previous state readable, and corrupted primary state can recover from the last valid backup.
 
 ## 4. What is still prototype
 
-- The persistence backend is hardened JSON, not a database or multi-process transactional store.
+- The persistence backend is checksum-backed hardened JSON for a local service, not a database, multi-process transactional store, or distributed event log.
 - Semantic clustering is lightweight and local to proposition text; it does not call embeddings or an LLM.
 - Browser scoring is conservative and rejects many weak results; it does not perform full webpage retrieval or fact extraction.
 - The scheduler is bounded and introspective, not a general autonomous planner.
@@ -46,7 +46,7 @@
 - Inquiry tests verify different decisions under changed importance, contradiction, and search cost.
 - Browser evidence tests verify scoring, source credibility impact, deduplication, rejection, and observable failure.
 - Self-model tests verify domain-specific differences and help-seeking flags from actual prediction outcomes.
-- Persistence tests verify roundtrip, versioning, and partial-write safety.
+- Persistence tests verify roundtrip, versioning, active-lock behavior, stale-lock recovery, checksum corruption detection, backup recovery, and partial-write safety.
 - Scheduler tests verify idle behavior, reason codes, and bounded checks.
 - Anti-fake tests block evidence-free beliefs, source-free evidence, search success without evidence, self-model claims without history, unbacked world relations, and forbidden consciousness-like interface claims.
 - Long-term simulation runs 10,000 ticks and checks bounded events and stable belief count.

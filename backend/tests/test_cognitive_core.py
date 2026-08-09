@@ -184,6 +184,15 @@ def test_browser_evidence_scoring_dedupes_and_bad_sources_are_weak(tmp_path):
     assert dedupe.meta_state('y is documented') != 'known'
 
 
+def test_browser_evidence_scoring_requires_query_coverage_and_penalizes_thin_low_credibility(tmp_path):
+    c=core(tmp_path)
+    with pytest.raises(ValueError):
+        c.run_inquiry_results('release docs are documented', [{'title':'Unrelated rumor', 'url':'https://spam.example/rumor', 'content':'thin'}])
+    assert not c.beliefs
+    ev=c.run_inquiry_results('release docs are documented', [{'title':'Official release docs', 'url':'https://docs.example.test/release', 'content':'official release documentation manual with evidence and version notes'}])
+    assert ev and c.meta_state('release docs are documented') in {'likely','uncertain'}
+
+
 def test_search_failure_is_observable_and_low_value_rejected(tmp_path):
     c=core(tmp_path)
     with pytest.raises(ValueError):
@@ -233,6 +242,18 @@ def test_persistence_active_lock_is_explicit_and_stale_lock_recovers(tmp_path):
     os.utime(lock, (old, old))
     c.save()
     assert not lock.exists()
+
+
+def test_persistence_checksum_detects_corruption_and_recovers_backup(tmp_path):
+    c=core(tmp_path)
+    c.ingest_evidence('backup recovery ready','manual','test',0.8,'supports',0.8)
+    c.save()
+    backup=c.path.with_suffix(c.path.suffix+'.bak')
+    assert backup.exists()
+    c.path.write_text('{"version": 4, "__checksum": "bad", "beliefs": {"x": {}}}')
+    recovered=core(tmp_path)
+    assert recovered.beliefs
+    assert any(e['type']=='state.load_recovered_from_backup' for e in recovered.events)
 
 
 def test_scheduler_idle_and_reason_codes_and_bounds(tmp_path):

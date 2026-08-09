@@ -236,6 +236,10 @@ def test_backend_smoke_health_and_command():
         assert health.json()['safe_defaults']['browser_automation'] is False
         assert health.json()['safe_defaults']['mobile_bridge'] is False
         assert health.json()['persistence']['status'] in {'ok', 'locked'}
+        diag = client.get('/diagnostics')
+        assert diag.status_code == 200
+        assert diag.json()['event_bus']['history_limit'] >= 1
+        assert 'belief_revisions' in diag.json()['cognitive']
         res = client.post('/api/command', json={'prompt': 'remember api smoke test', 'context': {}})
         assert res.status_code == 200
         assert res.json()['status'] == 'completed'

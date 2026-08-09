@@ -9,6 +9,8 @@ from .memory import SpatialMemoryAgent
 
 STATE_VERSION=4
 LOCK_STALE_SECONDS=30
+LOCK_WAIT_SECONDS=2.0
+LOCK_RETRY_SECONDS=0.05
 
 def now(): return datetime.now(UTC).isoformat()
 def cid(prefix: str, text: str) -> str: return prefix + hashlib.sha1(text.encode()).hexdigest()[:12]
@@ -142,8 +144,8 @@ class CognitiveCore:
         data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests,'operational_memory':self.operational_memory[-500:],'drift_signals':self.drift_signals}
         data['__checksum']=self._state_checksum(data)
         self.path.parent.mkdir(parents=True,exist_ok=True); tmp=self.path.with_suffix(self.path.suffix+'.tmp'); lock=self.path.with_suffix(self.path.suffix+'.lock'); backup=self.path.with_suffix(self.path.suffix+'.bak')
-        fd=None
-        for _ in range(2):
+        fd=None; deadline=time.time()+LOCK_WAIT_SECONDS
+        while time.time() <= deadline:
             try:
                 fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
                 break
@@ -153,10 +155,12 @@ class CognitiveCore:
                 except FileNotFoundError:
                     continue
                 if age <= LOCK_STALE_SECONDS:
-                    self._append_event('state.save_blocked', {'reason':'active_lock','lock':str(lock)})
-                    raise RuntimeError(f'cognitive state save is already in progress: {lock}')
+                    time.sleep(LOCK_RETRY_SECONDS)
+                    continue
                 lock.unlink(missing_ok=True)
-        if fd is None: raise RuntimeError(f'could not acquire cognitive state lock: {lock}')
+        if fd is None:
+            self._append_event('state.save_blocked', {'reason':'lock_timeout','lock':str(lock),'wait_seconds':LOCK_WAIT_SECONDS})
+            raise RuntimeError(f'could not acquire cognitive state lock within {LOCK_WAIT_SECONDS:.1f}s: {lock}')
         try:
             with open(tmp,'w',encoding='utf-8') as handle:
                 json.dump(data,handle,ensure_ascii=False,indent=2); handle.write('\n'); handle.flush(); os.fsync(handle.fileno())
@@ -165,6 +169,30 @@ class CognitiveCore:
         finally:
             if fd is not None: os.close(fd)
             Path(lock).unlink(missing_ok=True); Path(tmp).unlink(missing_ok=True)
+    def persistence_status(self):
+        lock=self.path.with_suffix(self.path.suffix+'.lock'); backup=self.path.with_suffix(self.path.suffix+'.bak')
+        status='ok'; error=None
+        if self.path.exists() and not self.path.is_file(): status='invalid_path'
+        elif lock.exists(): status='locked'
+        elif self.path.exists():
+            try: self._read_state_file(self.path)
+            except Exception as exc: status='corrupt'; error=type(exc).__name__
+        return {'path':str(self.path),'status':status,'version':self.version,'backup_exists':backup.exists(),'lock_exists':lock.exists(),'error':error}
+    def metrics_snapshot(self):
+        event_counts={}
+        for event in self.events:
+            typ=event.get('type','unknown'); event_counts[typ]=event_counts.get(typ,0)+1
+        return {
+            'persistence': self.persistence_status(),
+            'counts': {'evidence':len(self.evidence),'beliefs':len(self.beliefs),'world_relations':len(self.world),'plans':len(self.plans),'actions':len(self.actions),'failures':len(self.failures),'procedures':len(self.procedures),'transfers':len(self.transfers),'benchmarks':len(self.benchmarks),'debug_records':len(self.debug_records),'events':len(self.events),'ticks':self.tick_count},
+            'belief_revisions': sum(b.revision_count for b in self.beliefs.values()),
+            'inquiry': {'browser_requests':self.browser_requests,'search_failures':event_counts.get('inquiry.search_failed',0),'search_evidence_attached':event_counts.get('inquiry.search_evidence_attached',0)},
+            'recovery': {'failures':len(self.failures),'decisions':{d:sum(1 for f in self.failures.values() if f.recovery_decision==d) for d in {f.recovery_decision for f in self.failures.values()}}},
+            'tools': {name:{'attempts':t.attempts,'trust_score':t.trust_score,'failures':t.failures} for name,t in self.tools.items()},
+            'drift': self.drift_signals,
+            'event_types': event_counts,
+            'limits': self.limits,
+        }
     def _belief_id(self, proposition): return cid('b_', normalize_text(proposition)['canonical'])
     def _find_equiv(self,n):
         s=set(n['terms'])
@@ -298,11 +326,16 @@ class CognitiveCore:
     def run_inquiry_results(self, proposition, results):
         self.browser_requests+=1
         if not results: self._append_event('inquiry.search_failed',{'proposition':proposition,'reason':'empty_results'}); self.save(); raise ValueError('search cannot succeed without evidence')
-        ev=[]; seen=set()
+        candidates=[]; seen=set()
         for r in results:
             score,reason=self._score_result(r, proposition); host=reason
             if score<0.38 or host in seen: continue
-            seen.add(host); rel='supports'; ev.append(self.ingest_evidence(proposition,r.get('url') or 'browser','browser',None,rel,score,{'title':r.get('title'),'score':score}))
+            seen.add(host); candidates.append((r,score,host))
+        ev=[]; corroborated=len(candidates)>=2
+        for r,score,host in candidates:
+            score=clamp(score+(0.05 if corroborated else 0.0))
+            tier='strong' if score>=0.72 and corroborated else 'moderate' if score>=0.5 else 'weak'
+            rel='supports'; ev.append(self.ingest_evidence(proposition,r.get('url') or 'browser','browser',None,rel,score,{'title':r.get('title'),'score':score,'quality_tier':tier,'corroborated':corroborated,'host':host}))
             st=self.source_stats.setdefault('source:'+host,{'observations':0,'reliability':self.source_credibility(r.get('url') or host,'browser')}); st['observations']+=1; st['reliability']=clamp((st['reliability']*(st['observations']-1)+score)/st['observations'])
         if not ev: self._append_event('inquiry.search_failed',{'proposition':proposition,'reason':'no_usable_evidence'}); self.save(); raise ValueError('search results contained no usable evidence')
         self._append_event('inquiry.search_evidence_attached',{'proposition':proposition,'count':len(ev)}); self.save(); return ev

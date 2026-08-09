@@ -10,8 +10,9 @@ Noor OS is a local-first release candidate with production-hardened runtime path
 - Frontend production build is part of the release verification path.
 - Browser automation, mobile bridge, and cloud fallback are disabled by default in example/config settings and must be explicitly enabled.
 - CORS and WebSocket origins default to localhost frontend origins.
-- JSON cognitive persistence uses a versioned state file, checksum validation, backup recovery, fsynced temp-file replacement, an active-lock guard, and stale-lock recovery.
+- JSON cognitive persistence uses a versioned state file, checksum validation, backup recovery, fsynced temp-file replacement, an active-lock guard with bounded retry, and stale-lock recovery.
 - Local startup preflights backend port conflicts. Docker startup maps the configured backend host port to the same configured in-container port and waits on a backend healthcheck before starting the frontend.
+- `/diagnostics` exposes bounded operational metrics for persistence health, event bus pressure, belief revisions, inquiry outcomes, recovery decisions, tool reliability, drift signals, event categories, and tick counts.
 
 ## What is production-hardened
 
@@ -20,13 +21,14 @@ Noor OS is a local-first release candidate with production-hardened runtime path
 - Connectivity safety: CORS and WebSocket origins are restricted to configured local frontend origins by default; origin-less WebSockets are rejected.
 - Startup behavior: local startup detects occupied or invalid backend ports before launch; Docker healthchecks gate frontend startup on backend readiness.
 - Operational observability: health output exposes safe-default flags, persistence status/version, and bounded history limits.
+- Diagnostics are structured and bounded so production operators can inspect degradation without dumping full cognitive state.
 
 ## What remains heuristic, bounded, or fallback
 
 - Cognitive normalization, source scoring, world extraction, planning, procedure induction, transfer scoring, drift detection, and debug cause hypotheses are substantially hardened and covered by tests, but remain transparent bounded algorithms rather than general semantic reasoning guarantees.
 - Autonomy is bounded by tick/resource limits and does not imply general autonomous operation.
 - Vision is a grid fallback and does not identify objects without a real multimodal adapter.
-- Browser evidence is scored with source reliability, source history, query coverage, quality hints, thin-content penalties, low-credibility penalties, and deduplication, but it still does not prove truth by itself.
+- Browser evidence is scored with source reliability, source history, query coverage, quality hints, thin-content penalties, low-credibility penalties, deduplication, multi-result corroboration, and explicit quality tiers, but it still does not prove truth by itself.
 - ADB actions are optional, disabled by default, validated, and depend on local device/tool availability.
 - JSON persistence is hardened for a local service, but it is not a multi-writer database or distributed event store.
 

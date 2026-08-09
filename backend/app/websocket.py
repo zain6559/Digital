@@ -36,6 +36,9 @@ class EventBus:
     def disconnect(self, ws: WebSocket):
         self.clients.discard(ws)
 
+    def stats(self):
+        return {'clients': len(self.clients), 'history': len(self.history), 'history_limit': self.history_limit}
+
     async def publish(self, event: Event):
         async with self.lock:
             self.history.append(event)

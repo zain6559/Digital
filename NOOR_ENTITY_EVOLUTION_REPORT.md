@@ -4,18 +4,18 @@
 
 - Beliefs are created and revised only by validated evidence records. Every confidence update stores the evidence id, before/after confidence, effective relation, evidence weight, and timestamp in the belief audit trail.
 - Evidence impact is causally moderated by source credibility, evidence strength, browser result quality, source history, and contradiction handling.
-- Browser search success requires usable, scored, deduplicated results. Empty, duplicate-only, or low-value results produce observable `inquiry.search_failed` events instead of knowledge claims.
+- Browser search success requires usable, scored, deduplicated results. Empty, duplicate-only, or low-value results produce observable `inquiry.search_failed` events instead of knowledge claims, and accepted evidence includes quality tier/corroboration metadata.
 - Inquiry action selection uses meta-state, importance, expected gain, search cost, source credibility assumptions, and contradiction severity. It can search, ask, defer, idle, or act despite uncertainty.
 - World relations are backed by evidence ids and include typed relation state, confidence, temporal hints, and ambiguity handling.
 - Self-model output is derived from prediction/outcome history by domain and action type. It reports strengths, weaknesses, overconfidence risk, and help-seeking recommendations only when history exists.
 - Autonomy ticks are bounded by check count and time budget. Each tick records an action/state plus reason codes.
-- Persistence includes a state version, migration hook, checksum validation, backup recovery, fsynced temp-file replacement, stale-lock recovery, and an active write lock guard.
+- Persistence includes a state version, migration hook, checksum validation, backup recovery, fsynced temp-file replacement, stale-lock recovery, and an active write lock guard with bounded retry.
 
 ## 2. What remains heuristic
 
 - Semantic belief normalization is intentionally lightweight. It uses canonical terms, aliases, relation hints, polarity, stop-word removal, and equivalence thresholds; it is not a full natural-language understanding system.
 - World extraction uses constrained lexical patterns for entities, relations, causes, and temporal hints. Ambiguous text is marked weak or ambiguous instead of being interpreted with false precision.
-- Source credibility is a practical bounded scoring algorithm based on source type, URL/domain hints, source history, query coverage, content quality hints, thin-content penalties, low-credibility penalties, and deduplication. It is not a truth oracle.
+- Source credibility is a practical bounded scoring algorithm based on source type, URL/domain hints, source history, query coverage, content quality hints, thin-content penalties, low-credibility penalties, deduplication, corroboration, and quality tiers. It is not a truth oracle.
 - Inquiry value-of-information is a transparent formula, not an optimal Bayesian planner.
 - Self-model domain detection uses domain/action hints from recorded predictions. It is inspectable but still prototype-level.
 
@@ -47,6 +47,7 @@
 - Browser evidence tests verify scoring, source credibility impact, deduplication, rejection, and observable failure.
 - Self-model tests verify domain-specific differences and help-seeking flags from actual prediction outcomes.
 - Persistence tests verify roundtrip, versioning, active-lock behavior, stale-lock recovery, checksum corruption detection, backup recovery, and partial-write safety.
+- Diagnostics tests verify bounded operational metrics for persistence, belief revisions, and event categories.
 - Scheduler tests verify idle behavior, reason codes, and bounded checks.
 - Anti-fake tests block evidence-free beliefs, source-free evidence, search success without evidence, self-model claims without history, unbacked world relations, and forbidden consciousness-like interface claims.
 - Long-term simulation runs 10,000 ticks and checks bounded events and stable belief count.

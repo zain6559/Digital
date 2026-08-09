@@ -21,14 +21,9 @@ app=FastAPI(title='Noor OS API', version='1.0.0', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=_csv(settings.noor_cors_origins), allow_credentials=False, allow_methods=['GET','POST'], allow_headers=['content-type','authorization'])
 @app.get('/health')
 async def health():
-    state_path = cognitive_core.path
-    persistence = 'ok'
-    if state_path.exists() and not state_path.is_file():
-        persistence = 'invalid_path'
-    if state_path.with_suffix(state_path.suffix + '.lock').exists():
-        persistence = 'locked'
+    persistence = cognitive_core.persistence_status()
     return {
-        'status': 'ok' if persistence == 'ok' else 'degraded',
+        'status': 'ok' if persistence['status'] == 'ok' else 'degraded',
         'service': 'noor-backend',
         'environment': settings.noor_env,
         'safe_defaults': {
@@ -37,8 +32,22 @@ async def health():
             'cloud_fallback': settings.hybrid_fallback_enabled,
             'public_posting': settings.noor_enable_public_posting,
         },
-        'persistence': {'path': str(state_path), 'status': persistence, 'version': cognitive_core.version},
+        'persistence': persistence,
         'limits': {'websocket_history': bus.history_limit, 'cognitive_events': cognitive_core.limits['max_events']},
+    }
+@app.get('/diagnostics')
+async def diagnostics():
+    return {
+        'service': 'noor-backend',
+        'environment': settings.noor_env,
+        'features': {
+            'browser_automation_enabled': settings.noor_enable_browser_automation,
+            'mobile_bridge_enabled': settings.noor_enable_mobile_bridge,
+            'cloud_fallback_enabled': settings.hybrid_fallback_enabled,
+            'public_posting_enabled': settings.noor_enable_public_posting,
+        },
+        'event_bus': bus.stats(),
+        'cognitive': cognitive_core.metrics_snapshot(),
     }
 @app.post('/api/command')
 async def command(req:CommandRequest): return await coordinator.execute(req)

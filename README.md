@@ -14,6 +14,7 @@ It is not a conscious system, not a general autonomous operator, and not a multi
 - **Mobile bridge:** builds constrained ADB commands for device scan, tap, text, and wake actions. It validates arguments, times out hung commands, and reports failures explicitly.
 - **WebSocket event bus:** publishes bounded event history to allowed origins configured by environment variables.
 - **Health endpoint:** reports backend status, safe-default feature flags, persistence-file status, and bounded history limits. It is a readiness signal for the local service, not an external dependency monitor.
+- **Diagnostics endpoint:** exposes bounded operational metrics for persistence, event bus size, belief revisions, inquiry outcomes, recovery decisions, tool trust, drift signals, and tick stability.
 - **Cognitive core:** stores validated evidence, revisable beliefs, world relations, goals, predictions, outcome errors, learning statistics, and bounded autonomy ticks in checksum-backed JSON persistence with backup recovery. It is still bounded operational state, not consciousness.
 
 
@@ -24,6 +25,7 @@ It is not a conscious system, not a general autonomous operator, and not a multi
 - WebSocket replay is bounded, and allowed origins default to local frontend origins only.
 - WebSocket connections without an allowed `Origin` header are rejected by default.
 - Cognitive state writes use a lock, fsynced temp-file replacement, checksum validation, and a backup file for recovery from corrupted primary state.
+- `/diagnostics` is intended for local/operator inspection and should be protected by network policy if exposed beyond localhost.
 - The cognitive/operational core is inspectable prototype state: evidence, beliefs, plans, actions, skills, procedures, benchmarks, and debug traces are stored for audit, not as claims of consciousness or general autonomy.
 - See `FINAL_RELEASE_REPORT.md` for the final release-candidate limits and verification scope.
 

@@ -361,3 +361,157 @@ def test_long_run_skill_simulation_improves_tool_choice_and_help(tmp_path):
     assert c.tools['memory_retrieval'].trust_score > c.tools['browser_search'].trust_score
     assert 'browser_search_search' in sm['weak_skills']
     assert c.create_plan('search documented fact').steps[0]['tool_used'] == 'memory_retrieval'
+
+
+def complete_plan(c, objective, outcome=True):
+    plan=c.create_plan(objective)
+    outcomes={st['step_id']:{'success':outcome,'actual_outcome':'success' if outcome else 'failure','error_type':None if outcome else 'bad_result'} for st in plan.steps}
+    c.execute_plan(plan.plan_id, outcomes)
+    return plan
+
+
+def test_procedure_not_induced_from_single_success_but_induced_from_repetition(tmp_path):
+    c=core(tmp_path)
+    complete_plan(c, 'search docs for alpha')
+    assert c.induce_procedures(min_successes=2) == []
+    complete_plan(c, 'search docs for beta')
+    procs=c.induce_procedures(min_successes=2)
+    assert procs
+    proc=procs[0]
+    assert proc.success_count >= 2
+    assert proc.confidence > 0
+    assert proc.derived_from
+
+
+def test_task_template_mined_from_validated_procedure(tmp_path):
+    c=core(tmp_path)
+    complete_plan(c, 'search docs for alpha')
+    complete_plan(c, 'search docs for beta')
+    c.induce_procedures(min_successes=2)
+    templates=c.mine_task_templates(min_count=2)
+    assert templates
+    assert templates[0].goal_type == 'search_and_evaluate'
+    assert templates[0].confidence > 0
+
+
+def test_transfer_requires_test_and_cross_domain_validation(tmp_path):
+    c=core(tmp_path)
+    for i in range(3):
+        c.record_action(f'browser search {i}','search','browser_search','success','success',True)
+    tr=c.create_transfer_test('browser_search_search','memory_retrieval_retrieve','information retrieval overlap')
+    assert tr.test_result is None
+    assert tr.transfer_strength > 0
+    failed=c.validate_transfer(tr.id, False, 'outcome_1')
+    assert failed.test_result == 'failed'
+    assert failed.confidence_after < failed.confidence_before
+    passed=c.validate_transfer(tr.id, True, 'outcome_2')
+    assert passed.test_result == 'success'
+    assert passed.outcome_ids
+
+
+def test_benchmark_requires_outcomes_and_tracks_improvement(tmp_path):
+    c=core(tmp_path)
+    with pytest.raises(ValueError):
+        c.evaluate_benchmark('browser','search')
+    ids=[]
+    for i in range(4):
+        ids.append(c.record_action(f'browser search {i}','search','browser_search','success','bad',False,confidence_before=0.8).id)
+    b1=c.evaluate_benchmark('browser','search',ids)
+    for i in range(6):
+        ids.append(c.record_action(f'browser search ok {i}','search','browser_search','success','success',True,confidence_before=0.5).id)
+    b2=c.evaluate_benchmark('browser','search',ids)
+    assert b2.sample_size == 10
+    assert b2.success_rate > b1.success_rate
+    assert b2.trend == 'improving'
+
+
+def test_drift_detection_degrades_skill_and_procedure(tmp_path):
+    c=core(tmp_path)
+    for i in range(10):
+        c.record_action(f'browser task {i}','search','browser_search','success','success',True,duration=0.1)
+    complete_plan(c, 'search docs alpha')
+    complete_plan(c, 'search docs beta')
+    proc=c.induce_procedures(min_successes=2)[0]
+    for i in range(5):
+        c.record_action(f'browser task degraded {i}','search','browser_search','success','bad',False,error_type='bad_result',duration=1.0,confidence_before=0.9)
+    drift=c.detect_drift('browser',recent=5,baseline=10)
+    assert drift['drift'] is True
+    assert c.skills['browser_search_search'].ask_for_help_flag is True
+    assert c.procedures[proc.id].lifecycle == 'degraded'
+
+
+def test_competence_calibration_changes_planning_to_safer_or_help(tmp_path):
+    c=core(tmp_path)
+    c.drift_signals['browser']={'drift':True}
+    c.tools['browser_search']=c._tool('browser_search')
+    c.tools['browser_search'].trust_score=0.1
+    plan=c.create_plan('search documented fact')
+    assert plan.steps[0]['tool_used'] in {'ask_human','memory_retrieval'}
+    assert any(a.startswith('competence:') for a in plan.assumptions)
+
+
+def test_debug_failure_uses_failure_history_and_updates_procedure_modes(tmp_path):
+    c=core(tmp_path)
+    complete_plan(c, 'search docs alpha')
+    complete_plan(c, 'search docs beta')
+    proc=c.induce_procedures(min_successes=2)[0]
+    plan=c.create_plan('search docs gamma')
+    c.execute_plan(plan.plan_id, {'step_1': {'success': False, 'actual_outcome': 'timeout', 'error_type': 'timeout'}})
+    fid=next(iter(c.failures))
+    dbg=c.debug_failure(fid, proc.id)
+    assert dbg.failure_id == fid
+    assert dbg.selected_fix in {'retry_with_smaller_probe','ask_human','change_tool'}
+    assert c.procedures[proc.id].known_failure_modes['timeout'] >= 1
+
+
+def test_procedure_confidence_does_not_rise_without_evidence(tmp_path):
+    c=core(tmp_path)
+    proc=c.induce_procedures(min_successes=2)
+    assert proc == []
+    manual_conf=sum(p.confidence for p in c.procedures.values())
+    assert manual_conf == 0
+
+
+def test_new_layer_causal_ablation(tmp_path):
+    no_proc=core(tmp_path/'no_proc', procedure_induction=False)
+    complete_plan(no_proc, 'search docs a'); complete_plan(no_proc, 'search docs b')
+    assert no_proc.induce_procedures() == []
+    no_transfer=core(tmp_path/'no_transfer', transfer_layer=False)
+    assert no_transfer.create_transfer_test('a','b') is None
+    no_bench=core(tmp_path/'no_bench', benchmark_tracking=False)
+    no_bench.record_action('browser task','search','browser_search','success','success',True)
+    assert no_bench.evaluate_benchmark('browser') is None
+    no_drift=core(tmp_path/'no_drift', drift_detection=False)
+    assert no_drift.detect_drift('browser') is None
+    no_debug=core(tmp_path/'no_debug', debug_tracing=False)
+    plan=no_debug.create_plan('search docs')
+    no_debug.execute_plan(plan.plan_id, {'step_1': {'success': False, 'actual_outcome': 'bad'}})
+    fid=next(iter(no_debug.failures))
+    assert no_debug.debug_failure(fid) is None
+    no_calib=core(tmp_path/'no_calib', competence_calibration=False)
+    no_calib.drift_signals['browser']={'drift':True}
+    assert no_calib.create_plan('search docs').steps[0]['step_id'] == 'step_1'
+
+
+def test_long_run_transfer_simulation_and_persistence(tmp_path):
+    c=core(tmp_path)
+    for i in range(30):
+        complete_plan(c, f'search docs repeated {i}')
+    procs=c.induce_procedures(min_successes=2)
+    c.mine_task_templates(min_count=2)
+    for i in range(20):
+        c.record_action(f'browser search {i}','search','browser_search','success','success',True,duration=0.1)
+        c.record_action(f'memory retrieval {i}','retrieve','memory_retrieval','success','success',True,duration=0.05)
+    tr=c.create_transfer_test('browser_search_search','memory_retrieval_retrieve','retrieval pattern')
+    c.validate_transfer(tr.id, True, 'outcome_transfer')
+    b1=c.evaluate_benchmark('browser','search')
+    for i in range(15):
+        c.record_action(f'browser degraded {i}','search','browser_search','success','bad',False,error_type='bad_result',duration=1.0,confidence_before=0.9)
+    drift=c.detect_drift('browser',recent=5,baseline=10)
+    summary=c.competence_summary()
+    c.save(); c2=core(tmp_path)
+    assert procs and c2.procedures and c2.transfers and c2.benchmarks and c2.task_templates
+    assert b1.success_rate > 0
+    assert drift['drift'] is True
+    assert summary['transferable_patterns']
+    assert c2.competence_summary()['domain_drift_summary']

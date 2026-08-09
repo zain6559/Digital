@@ -99,3 +99,40 @@ Do not claim:
 - Noor recovered unless a failure produced a `FailureRecord` and a recovery decision.
 - Noor is operationally competent in a tool unless `SkillRecord` and `ToolProfile` history support that claim.
 - Noor is autonomous beyond bounded plan/action/outcome loops.
+
+## 13. Skill generalization and transfer hardening
+
+This pass adds a transfer layer above operational competence. It still avoids any consciousness/personhood claim: generalization is represented only by records derived from repeated plans, action outcomes, transfer tests, benchmarks, drift signals, and debug traces.
+
+### What Noor can now generalize
+
+- Repeated successful plan structures can become `ProcedureRecord` templates with objective type, preconditions, reusable steps, fallback steps, tool sequence, expected outcomes, failure modes, confidence, lifecycle state, and source plan/action ids.
+- Repeated procedure structures can become `TaskTemplateRecord` skeletons such as search/evaluate or inspect/recover patterns.
+- Skill transfer is represented by explicit `TransferRecord` tests. Transfer confidence does not become valid until cross-domain validation records a success or failure.
+- Competence summaries expose successful procedures, failed procedures, transferable patterns, common recovery choices, and domain drift summaries as state used by planning.
+
+### What remains domain-specific
+
+- Procedure induction depends on repeated matching plan structures; a single success is insufficient.
+- Transfer is partial and bounded by tested source/target skill pairs. Browser search success does not automatically imply ADB competence.
+- Benchmarks are only as broad as recorded action outcomes in each domain/task type.
+
+### Benchmarking, drift, and debugging
+
+- `BenchmarkRecord` measures sample size, success rate, mean error, latency, retry rate, recovery rate, help-request rate, and trend.
+- Drift detection compares baseline and recent performance, degrades affected skills/procedures, and activates help-seeking when success rate or latency worsens.
+- `DebugRecord` links a failure to a cause hypothesis, similar past failures, selected fix, confidence, and optionally a reused procedure.
+
+### What changed after critique
+
+- Noor no longer treats operational repetition as mere history; repeated success can induce reusable procedures.
+- Noor no longer treats transfer as assumed; transfer must be tested and can fail.
+- Noor no longer treats skill confidence as static; benchmarks, drift, procedures, and tool trust calibrate action confidence.
+- Noor no longer repeats failures without introspection; failure records can produce debug traces and update procedure failure modes.
+
+### Additional claims that must not be made
+
+- Do not claim general competence without induced procedures and benchmark history.
+- Do not claim transfer without `TransferRecord.test_result` from another target skill/domain.
+- Do not claim robustness without benchmark and drift evidence.
+- Do not claim self-correction without `FailureRecord` plus `DebugRecord` evidence.

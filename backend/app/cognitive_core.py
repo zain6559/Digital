@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from .schemas import MemoryIn
 from .memory import SpatialMemoryAgent
 
-STATE_VERSION=3
+STATE_VERSION=4
 
 def now(): return datetime.now(UTC).isoformat()
 def cid(prefix: str, text: str) -> str: return prefix + hashlib.sha1(text.encode()).hexdigest()[:12]
@@ -60,7 +60,7 @@ class ActionRecord:
 
 @dataclass
 class SkillRecord:
-    skill_name: str; prediction_count: int=0; action_count: int=0; success_count: int=0; failure_count: int=0; mean_error: float=0.0; mean_latency: float=0.0; reliability: float=0.0; overconfidence_flag: bool=False; ask_for_help_flag: bool=True; last_updated: str=field(default_factory=now)
+    skill_name: str; prediction_count: int=0; action_count: int=0; success_count: int=0; failure_count: int=0; mean_error: float=0.0; mean_latency: float=0.0; reliability: float=0.0; overconfidence_flag: bool=False; ask_for_help_flag: bool=True; last_updated: str=field(default_factory=now); lifecycle: str='emerging'
 
 @dataclass
 class ToolProfile:
@@ -78,11 +78,31 @@ class FailureRecord:
 class SubGoalRecord:
     id: str; parent_goal_id: str; objective: str; priority: float; progress: float=0.0; dependencies: list[str]=field(default_factory=list); success_criteria: list[str]=field(default_factory=list); blocking_reason: str|None=None; status: str='pending'
 
+@dataclass
+class ProcedureRecord:
+    id: str; name: str; objective_type: str; preconditions: list[str]; steps: list[dict[str, Any]]; fallback_steps: list[dict[str, Any]]; tool_sequence: list[str]; expected_outcomes: list[str]; known_failure_modes: dict[str,int]; domain: str; confidence: float=0.0; success_count: int=0; failure_count: int=0; transfer_count: int=0; last_updated: str=field(default_factory=now); evidence_ids: list[str]=field(default_factory=list); belief_ids: list[str]=field(default_factory=list); derived_from: list[str]=field(default_factory=list); lifecycle: str='emerging'
+
+@dataclass
+class TransferRecord:
+    id: str; source_skill: str; target_skill: str; transfer_reason: str; transfer_strength: float; test_result: str|None=None; confidence_before: float=0.0; confidence_after: float=0.0; evidence_ids: list[str]=field(default_factory=list); outcome_ids: list[str]=field(default_factory=list); created_at: str=field(default_factory=now)
+
+@dataclass
+class BenchmarkRecord:
+    id: str; domain: str; task_type: str; sample_size: int; success_rate: float; mean_error: float; mean_latency: float; retry_rate: float; recovery_rate: float; help_request_rate: float; last_evaluated: str; trend: str='insufficient_history'
+
+@dataclass
+class DebugRecord:
+    id: str; failure_id: str; hypothesized_cause: str; evidence_for: list[str]; evidence_against: list[str]; selected_fix: str; result: str; confidence: float; reused_procedure_id: str|None=None; created_at: str=field(default_factory=now)
+
+@dataclass
+class TaskTemplateRecord:
+    id: str; name: str; goal_type: str; skeleton_steps: list[dict[str, Any]]; domains: list[str]; success_count: int=0; failure_count: int=0; confidence: float=0.0; last_updated: str=field(default_factory=now); lifecycle: str='emerging'
+
 class CognitiveCore:
     def __init__(self, path: str|Path='noor_state.json', memory: SpatialMemoryAgent|None=None, limits: dict[str,int]|None=None, features: dict[str,bool]|None=None):
         self.path=Path(path); self.memory=memory or SpatialMemoryAgent(); self.limits={'max_memories':2000,'max_events':2000,'max_inquiries':100,'max_browser_requests':20,'tick_budget_ms':20,'max_tick_checks':50}|(limits or {})
-        defaults={'memory':True,'beliefs':True,'inquiry':True,'world_model':True,'prediction':True,'self_model':True,'autonomy':True,'action_memory':True,'skill_tracking':True,'planner':True,'recovery':True,'tool_reliability':True,'operational_self_model':True,'operational_memory':True}; defaults.update(features or {}); self.features=defaults
-        self.evidence={}; self.beliefs={}; self.world={}; self.predictions={}; self.goals={}; self.plans={}; self.actions={}; self.skills={}; self.tools={}; self.failures={}; self.subgoals={}; self.operational_memory=[]; self.unknowns={}; self.events=[]; self.source_stats={}; self.self_history=[]; self.tick_count=0; self.browser_requests=0; self.version=STATE_VERSION
+        defaults={'memory':True,'beliefs':True,'inquiry':True,'world_model':True,'prediction':True,'self_model':True,'autonomy':True,'action_memory':True,'skill_tracking':True,'planner':True,'recovery':True,'tool_reliability':True,'operational_self_model':True,'operational_memory':True,'procedure_induction':True,'transfer_layer':True,'benchmark_tracking':True,'drift_detection':True,'debug_tracing':True,'competence_calibration':True}; defaults.update(features or {}); self.features=defaults
+        self.evidence={}; self.beliefs={}; self.world={}; self.predictions={}; self.goals={}; self.plans={}; self.actions={}; self.skills={}; self.tools={}; self.failures={}; self.subgoals={}; self.procedures={}; self.transfers={}; self.benchmarks={}; self.debug_records={}; self.task_templates={}; self.drift_signals={}; self.operational_memory=[]; self.unknowns={}; self.events=[]; self.source_stats={}; self.self_history=[]; self.tick_count=0; self.browser_requests=0; self.version=STATE_VERSION
         self.load()
     def _append_event(self, typ, payload): self.events.append({'type':typ,'payload':payload,'ts':now()}); self.events=self.events[-self.limits['max_events']:]
     def _domain(self, text):
@@ -98,10 +118,10 @@ class CognitiveCore:
         self.version=data.get('version',1)
         def filt(cls,v):
             names=cls.__dataclass_fields__.keys(); return cls(**{k:v for k,v in v.items() if k in names})
-        self.evidence={k:filt(EvidenceRecord,v) for k,v in data.get('evidence',{}).items()}; self.beliefs={k:filt(BeliefRecord,v) for k,v in data.get('beliefs',{}).items()}; self.world={k:filt(WorldRelation,v) for k,v in data.get('world',{}).items()}; self.predictions={k:filt(PredictionRecord,v) for k,v in data.get('predictions',{}).items()}; self.goals={k:filt(GoalRecord,v) for k,v in data.get('goals',{}).items()}; self.plans={k:filt(PlanRecord,v) for k,v in data.get('plans',{}).items()}; self.actions={k:filt(ActionRecord,v) for k,v in data.get('actions',{}).items()}; self.skills={k:filt(SkillRecord,v) for k,v in data.get('skills',{}).items()}; self.tools={k:filt(ToolProfile,v) for k,v in data.get('tools',{}).items()}; self.failures={k:filt(FailureRecord,v) for k,v in data.get('failures',{}).items()}; self.subgoals={k:filt(SubGoalRecord,v) for k,v in data.get('subgoals',{}).items()}; self.operational_memory=data.get('operational_memory',[]); self.unknowns=data.get('unknowns',{}); self.events=data.get('events',[])[:self.limits['max_events']]; self.source_stats=data.get('source_stats',{}); self.self_history=data.get('self_history',[]); self.tick_count=data.get('tick_count',0); self.browser_requests=data.get('browser_requests',0)
+        self.evidence={k:filt(EvidenceRecord,v) for k,v in data.get('evidence',{}).items()}; self.beliefs={k:filt(BeliefRecord,v) for k,v in data.get('beliefs',{}).items()}; self.world={k:filt(WorldRelation,v) for k,v in data.get('world',{}).items()}; self.predictions={k:filt(PredictionRecord,v) for k,v in data.get('predictions',{}).items()}; self.goals={k:filt(GoalRecord,v) for k,v in data.get('goals',{}).items()}; self.plans={k:filt(PlanRecord,v) for k,v in data.get('plans',{}).items()}; self.actions={k:filt(ActionRecord,v) for k,v in data.get('actions',{}).items()}; self.skills={k:filt(SkillRecord,v) for k,v in data.get('skills',{}).items()}; self.tools={k:filt(ToolProfile,v) for k,v in data.get('tools',{}).items()}; self.failures={k:filt(FailureRecord,v) for k,v in data.get('failures',{}).items()}; self.subgoals={k:filt(SubGoalRecord,v) for k,v in data.get('subgoals',{}).items()}; self.procedures={k:filt(ProcedureRecord,v) for k,v in data.get('procedures',{}).items()}; self.transfers={k:filt(TransferRecord,v) for k,v in data.get('transfers',{}).items()}; self.benchmarks={k:filt(BenchmarkRecord,v) for k,v in data.get('benchmarks',{}).items()}; self.debug_records={k:filt(DebugRecord,v) for k,v in data.get('debug_records',{}).items()}; self.task_templates={k:filt(TaskTemplateRecord,v) for k,v in data.get('task_templates',{}).items()}; self.drift_signals=data.get('drift_signals',{}); self.operational_memory=data.get('operational_memory',[]); self.unknowns=data.get('unknowns',{}); self.events=data.get('events',[])[:self.limits['max_events']]; self.source_stats=data.get('source_stats',{}); self.self_history=data.get('self_history',[]); self.tick_count=data.get('tick_count',0); self.browser_requests=data.get('browser_requests',0)
     def save(self):
-        data={name:{k:asdict(v) for k,v in getattr(self,name).items()} for name in ['evidence','beliefs','world','predictions','goals','plans','actions','skills','tools','failures','subgoals']}
-        data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests,'operational_memory':self.operational_memory[-500:]}
+        data={name:{k:asdict(v) for k,v in getattr(self,name).items()} for name in ['evidence','beliefs','world','predictions','goals','plans','actions','skills','tools','failures','subgoals','procedures','transfers','benchmarks','debug_records','task_templates']}
+        data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests,'operational_memory':self.operational_memory[-500:],'drift_signals':self.drift_signals}
         self.path.parent.mkdir(parents=True,exist_ok=True); tmp=self.path.with_suffix(self.path.suffix+'.tmp'); lock=self.path.with_suffix(self.path.suffix+'.lock')
         fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
         try:
@@ -262,7 +282,7 @@ class CognitiveCore:
             s=self._skill(self._skill_name(action.action_type, action.tool_used)); s.action_count+=1; s.last_updated=now(); s.mean_latency=self._update_mean(s.mean_latency,s.action_count,action.duration)
             if action.success: s.success_count+=1
             else: s.failure_count+=1
-            err=abs((1.0 if action.success else 0.0)-action.confidence_before); s.mean_error=self._update_mean(s.mean_error,s.action_count,err); s.reliability=clamp(s.success_count/s.action_count if s.action_count else 0); s.overconfidence_flag=s.mean_error>=0.45 and action.confidence_before>=0.6; s.ask_for_help_flag=s.reliability<0.5 or s.overconfidence_flag
+            err=abs((1.0 if action.success else 0.0)-action.confidence_before); s.mean_error=self._update_mean(s.mean_error,s.action_count,err); s.reliability=clamp(s.success_count/s.action_count if s.action_count else 0); s.overconfidence_flag=s.mean_error>=0.45 and action.confidence_before>=0.6; s.ask_for_help_flag=s.reliability<0.5 or s.overconfidence_flag; s.lifecycle='stable' if s.action_count>=10 and s.reliability>=0.8 else 'validated' if s.action_count>=3 and s.reliability>=0.65 else 'degraded' if s.action_count>=3 and s.reliability<0.35 else 'provisional' if s.action_count>=2 else 'emerging'
     def record_action(self, objective, action_type, tool_used, expected_outcome, actual_outcome=None, success=None, goal_id=None, input_summary='', confidence_before=0.5, duration=0.0, retries=0, error_type=None, evidence_ids=None, belief_ids=None):
         if not self.features.get('action_memory', True): return None
         if success is None and actual_outcome is None: raise ValueError('action outcome is required')
@@ -302,7 +322,9 @@ class CognitiveCore:
             step={'step_id':f'step_{i+1}','objective':ch,'action_type':action_type,'tool_used':tool,'expected_outcome':'success','status':'pending','retries':0}; steps.append(step); selected.append(tool)
         fallback=[{'action':'ask_human','reason':'low_skill_or_failed_step'}]
         expected_value=max(0.1, 1.0-(0.2*len(steps))-(0.3 if risk=='medium' else 0))
-        plan=PlanRecord(cid('pl_', objective+now()), objective, assumptions, steps, risk, 0.2*len(steps), expected_value, fallback, selected, beliefs, goal_id=goal_id, status=status)
+        calib=self.calibrate_action_confidence(objective, selected[0] if selected else 'memory_retrieval') if self.features.get('competence_calibration', True) else {'confidence':0.5,'mode':'normal'}
+        if calib['mode'] in {'safer','ask_human'} and steps: steps.insert(0, {'step_id':'step_0','objective':'small competence probe for '+objective,'action_type':'ask_human' if calib['mode']=='ask_human' else 'retrieve','tool_used':'ask_human' if calib['mode']=='ask_human' else 'memory_retrieval','expected_outcome':'success','status':'pending','retries':0})
+        plan=PlanRecord(cid('pl_', objective+now()), objective, assumptions+[f"competence:{calib['confidence']:.2f}"], steps, risk, 0.2*len(steps), expected_value*calib['confidence'], fallback, [st['tool_used'] for st in steps], beliefs, goal_id=goal_id, status=status)
         self.plans[plan.plan_id]=plan; self._append_event('plan.created', asdict(plan)); self.save(); return plan
     def recover_from_failure(self, action, plan=None, failure_type=None):
         if not self.features.get('recovery', True): return 'abort'
@@ -338,6 +360,84 @@ class CognitiveCore:
         weak=[s.skill_name for s in self.skills.values() if s.ask_for_help_flag]; strong=[s.skill_name for s in self.skills.values() if s.action_count>=2 and s.reliability>=0.7]
         tools={t.tool_name:{'trust_score':t.trust_score,'attempts':t.attempts,'failure_modes':t.failure_modes} for t in self.tools.values()}
         return {'strong_skills':strong,'weak_skills':weak,'tools':tools,'failure_patterns':{f.failure_type:sum(1 for x in self.failures.values() if x.failure_type==f.failure_type) for f in self.failures.values()},'should_ask_for_help':bool(weak)}
+
+    def _objective_type(self, text):
+        low=text.lower()
+        if any(x in low for x in ['search','docs','browser','verify']): return 'search_and_evaluate'
+        if any(x in low for x in ['tap','adb','device','inspect']): return 'inspect_and_recover'
+        if any(x in low for x in ['revise','contradict','belief']): return 'compare_and_revise'
+        if 'then' in low or ';' in low: return 'decompose_and_execute'
+        return 'general_task'
+    def induce_procedures(self, min_successes=2):
+        if not self.features.get('procedure_induction', True): return []
+        groups={}
+        for p in self.plans.values():
+            if p.status!='completed': continue
+            key=(self._objective_type(p.objective), tuple(st['tool_used'] for st in p.steps), tuple(st['action_type'] for st in p.steps))
+            groups.setdefault(key,[]).append(p)
+        made=[]
+        for (otype,tools,acts),plans in groups.items():
+            if len(plans)<min_successes: continue
+            pid=cid('proc_', otype+'|'.join(tools)+'|'.join(acts)); failures={}
+            for f in self.failures.values(): failures[f.failure_type]=failures.get(f.failure_type,0)+1
+            proc=self.procedures.get(pid) or ProcedureRecord(pid, otype.replace('_',' ')+' procedure', otype, [f'repeated_successes>={min_successes}'], [{'action_type':a,'tool_used':t} for a,t in zip(acts,tools)], [{'action':'ask_human'}], list(tools), ['success']*len(tools), failures, self._domain(' '.join(p.objective for p in plans)))
+            proc.success_count=len(plans); proc.failure_count=sum(1 for p in self.plans.values() if self._objective_type(p.objective)==otype and p.status=='failed'); proc.confidence=clamp(proc.success_count/(proc.success_count+proc.failure_count+1)); proc.derived_from=list({p.plan_id for p in plans}); proc.belief_ids=list({b for p in plans for b in p.belief_ids_used}); proc.lifecycle='stable' if proc.success_count>=5 and proc.failure_count==0 else 'validated' if proc.success_count>=2 else 'emerging'; proc.last_updated=now(); self.procedures[pid]=proc; made.append(proc)
+        self.save(); return made
+    def mine_task_templates(self, min_count=2):
+        groups={}
+        for proc in self.procedures.values(): groups.setdefault(proc.objective_type,[]).append(proc)
+        out=[]
+        for otype,procs in groups.items():
+            if len(procs)<1 or sum(p.success_count for p in procs)<min_count: continue
+            tid=cid('tmpl_',otype); tmpl=self.task_templates.get(tid) or TaskTemplateRecord(tid, otype.replace('_','-'), otype, procs[0].steps, sorted({p.domain for p in procs}))
+            tmpl.success_count=sum(p.success_count for p in procs); tmpl.failure_count=sum(p.failure_count for p in procs); tmpl.confidence=clamp(tmpl.success_count/(tmpl.success_count+tmpl.failure_count+1)); tmpl.lifecycle='validated' if tmpl.confidence>=0.6 else 'emerging'; tmpl.last_updated=now(); self.task_templates[tid]=tmpl; out.append(tmpl)
+        self.save(); return out
+    def create_transfer_test(self, source_skill, target_skill, reason='mapped competence'):
+        if not self.features.get('transfer_layer', True): return None
+        src=self.skills.get(source_skill); before=src.reliability if src else 0.0; strength=0.0 if not src or src.action_count<2 else before*0.4
+        tr=TransferRecord(cid('tr_',source_skill+target_skill+now()), source_skill, target_skill, reason, strength, None, before, before, [], [])
+        self.transfers[tr.id]=tr; self.save(); return tr
+    def validate_transfer(self, transfer_id, success, outcome_id=None):
+        tr=self.transfers[transfer_id]; tr.test_result='success' if success else 'failed'; delta=0.2 if success else -0.2; tr.confidence_after=clamp(tr.confidence_before+delta); tr.transfer_strength=clamp(tr.transfer_strength+delta); 
+        if outcome_id: tr.outcome_ids.append(outcome_id)
+        for proc in self.procedures.values():
+            if tr.source_skill in proc.tool_sequence or any(tool in tr.source_skill for tool in proc.tool_sequence) or tr.source_skill in proc.name:
+                proc.transfer_count+=1 if success else 0; proc.confidence=clamp(proc.confidence+(0.05 if success else -0.1)); proc.lifecycle='stable' if proc.transfer_count and proc.confidence>=0.7 else proc.lifecycle
+        self.save(); return tr
+    def evaluate_benchmark(self, domain, task_type=None, action_ids=None):
+        if not self.features.get('benchmark_tracking', True): return None
+        acts=[self.actions[i] for i in action_ids] if action_ids else [a for a in self.actions.values() if self._domain(a.objective)==domain or a.tool_used.startswith(domain) or a.action_type==domain]
+        if not acts: raise ValueError('benchmark requires action outcomes')
+        task_type=task_type or 'general'; successes=sum(1 for a in acts if a.success); failures=len(acts)-successes; mean_err=sum(abs((1 if a.success else 0)-a.confidence_before) for a in acts)/len(acts); mean_lat=sum(a.duration for a in acts)/len(acts); retry=sum(a.retries for a in acts)/len(acts); recoveries=sum(1 for f in self.failures.values() if f.action_id in {a.id for a in acts})/len(acts); help_rate=sum(1 for f in self.failures.values() if f.action_id in {a.id for a in acts} and f.recovery_decision=='ask_human')/len(acts)
+        bid=cid('bench_',domain+task_type); old=self.benchmarks.get(bid); rate=successes/len(acts); trend='insufficient_history' if not old else 'improving' if rate>old.success_rate else 'declining' if rate<old.success_rate else 'stable'
+        b=BenchmarkRecord(bid,domain,task_type,len(acts),rate,mean_err,mean_lat,retry,recoveries,help_rate,now(),trend); self.benchmarks[bid]=b; self.save(); return b
+    def detect_drift(self, domain, recent=5, baseline=10):
+        if not self.features.get('drift_detection', True): return None
+        acts=[a for a in self.actions.values() if self._domain(a.objective)==domain or a.tool_used.startswith(domain)]
+        if len(acts)<recent+baseline: return None
+        old=acts[:baseline]; new=acts[-recent:]; old_rate=sum(a.success for a in old)/len(old); new_rate=sum(a.success for a in new)/len(new); latency=(sum(a.duration for a in new)/len(new))-(sum(a.duration for a in old)/len(old)); drift=(old_rate-new_rate)>=0.25 or latency>0.5
+        sig={'domain':domain,'baseline_success_rate':old_rate,'recent_success_rate':new_rate,'latency_delta':latency,'drift':drift,'ts':now()}; self.drift_signals[domain]=sig
+        if drift:
+            for s in self.skills.values():
+                if domain in s.skill_name: s.lifecycle='degraded'; s.ask_for_help_flag=True
+            for proc in self.procedures.values():
+                if proc.domain==domain: proc.confidence=clamp(proc.confidence-0.2); proc.lifecycle='degraded'
+        self.save(); return sig
+    def debug_failure(self, failure_id, reused_procedure_id=None):
+        if not self.features.get('debug_tracing', True): return None
+        f=self.failures[failure_id]; similar=[x.id for x in self.failures.values() if x.failure_type==f.failure_type and x.id!=failure_id]; cause=f'pattern:{f.failure_type}' if similar else f.cause_hypothesis; fix='ask_human' if f.recovery_decision=='ask_human' else 'retry_with_smaller_probe' if f.recovery_decision=='retry' else 'change_tool'
+        dbg=DebugRecord(cid('dbg_',failure_id+now()), failure_id, cause, similar+[failure_id], [], fix, 'recorded', clamp(0.5+0.1*len(similar)), reused_procedure_id)
+        self.debug_records[dbg.id]=dbg
+        if reused_procedure_id and reused_procedure_id in self.procedures: self.procedures[reused_procedure_id].known_failure_modes[f.failure_type]=self.procedures[reused_procedure_id].known_failure_modes.get(f.failure_type,0)+1
+        self.save(); return dbg
+    def calibrate_action_confidence(self, objective, tool_used):
+        if not self.features.get('competence_calibration', True): return {'confidence':0.5,'mode':'normal'}
+        domain=self._domain(objective); tool=self.tools.get(tool_used, ToolProfile(tool_used)); bench=next((b for b in self.benchmarks.values() if b.domain==domain), None); procs=[p for p in self.procedures.values() if p.objective_type==self._objective_type(objective)]
+        proc_conf=max([p.confidence for p in procs], default=0.5); bench_rate=bench.success_rate if bench else 0.5; drift=self.drift_signals.get(domain,{}).get('drift',False); conf=clamp((tool.trust_score+bench_rate+proc_conf)/3 - (0.25 if drift else 0))
+        mode='ask_human' if conf<0.25 else 'safer' if conf<0.4 or drift else 'normal'
+        return {'confidence':conf,'mode':mode,'domain':domain,'procedure_confidence':proc_conf,'tool_trust':tool.trust_score,'drift':drift}
+    def competence_summary(self):
+        return {'successful_procedures':[p.id for p in self.procedures.values() if p.success_count>p.failure_count], 'failed_procedures':[p.id for p in self.procedures.values() if p.failure_count>=p.success_count and p.failure_count], 'transferable_patterns':[p.id for p in self.procedures.values() if p.transfer_count>0], 'common_recovery_patterns':{f.recovery_decision:sum(1 for x in self.failures.values() if x.recovery_decision==f.recovery_decision) for f in self.failures.values()}, 'domain_drift_summary':self.drift_signals}
     def knows(self, proposition): return self.meta_state(proposition) == 'known'
 
 cognitive_core=CognitiveCore(Path('noor_state.json'))

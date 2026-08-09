@@ -54,3 +54,48 @@
 ## 7. Operational note about the reported startup failure
 
 The reported Windows startup log shows Uvicorn reached application startup and then failed with `Errno 10048` binding `127.0.0.1:8000`. That error means port 8000 was already occupied by another process; it is not an application import/startup failure. The backend was verified on a free port during this hardening pass. To run locally when port 8000 is occupied, stop the existing process or choose another port, for example `python -m uvicorn app.main:app --host 127.0.0.1 --port 8765` with `PYTHONPATH=backend` from the repository root, or equivalent `PYTHONPATH=src` if running from a service layout that imports `src.main`.
+
+## 8. Operational intelligence hardening after critique
+
+The hardening critique showed that Noor had epistemic state but not enough operational competence. This pass adds inspectable operational state without replacing the existing backend stack:
+
+- `ActionRecord` stores each meaningful action with objective, goal link, tool, expected/actual outcome, success flag, confidence before/after, duration, retries, error type, and evidence/belief links.
+- `SkillRecord` derives operational skill reliability from action counts, successes, failures, mean error, latency, and overconfidence/help flags.
+- `ToolProfile` tracks attempts, successes, failures, latency, value added, failure modes, trust score, and last use for each tool.
+- `PlanRecord` stores decomposed, inspectable plans with assumptions, steps, risk, cost, expected value, fallback actions, selected tools, backing belief ids, status, and progress.
+- `FailureRecord` stores failure type, cause hypothesis, recovery decision, and effect on skill after failed actions.
+- `SubGoalRecord` turns larger goals into progress-bearing subgoals with dependencies and success criteria.
+- Operational memory stores compact execution episodes so future decisions can be influenced by what worked and failed.
+
+## 9. What Noor can now do operationally
+
+- Create a plan from a goal/objective, choose tools from current tool reliability, and refuse planner output when planner support is disabled.
+- Execute a plan step-by-step, record each action outcome, update skill and tool state after each step, and complete or block the parent goal based on real outcomes.
+- React to failure with retry, alternative action, ask-human, defer/abort style recovery decisions instead of blind repetition.
+- Prefer tools with better accumulated trust over tools with repeated failures.
+- Persist plans, actions, skills, tool profiles, failures, subgoals, and operational memory across restart.
+- Produce an operational self-model only from action history, skill stats, tool reliability, plan outcomes, and failure patterns.
+
+## 10. What improved measurably
+
+- Multi-step execution tests show `plan -> step -> outcome -> update -> next step` rather than one-shot success.
+- Long-run simulation tests drive browser failures and memory successes repeatedly, then verify that tool trust and skill reliability diverge and future plans choose the better tool.
+- Recovery tests verify failed actions remain failures, retries are not counted as success, and low-reliability or unsafe failures trigger human help.
+- Causality tests show disabling planner, action memory, skill tracking, recovery, tool reliability, or operational self-model changes behavior/state.
+
+## 11. Operational limits still present
+
+- Plan generation is heuristic and local to current beliefs, world state, objective text, and stored tool/skill history. It is not a full task planner.
+- Tool execution is represented by recorded outcomes supplied by adapters/tests; actions are not allowed to claim success without an actual outcome.
+- Recovery cause hypotheses are transparent heuristics based on error type and reliability, not deep root-cause analysis.
+- Operational memory is compact JSON state, not a production event store.
+
+## 12. Additional anti-fake claims now enforced
+
+Do not claim:
+
+- Noor knows how to execute a task unless there is supporting action/skill history.
+- Noor succeeded unless an `ActionRecord` or `PlanRecord` contains an actual successful outcome.
+- Noor recovered unless a failure produced a `FailureRecord` and a recovery decision.
+- Noor is operationally competent in a tool unless `SkillRecord` and `ToolProfile` history support that claim.
+- Noor is autonomous beyond bounded plan/action/outcome loops.

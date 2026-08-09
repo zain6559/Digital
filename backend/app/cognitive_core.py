@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from .schemas import MemoryIn
 from .memory import SpatialMemoryAgent
 
-STATE_VERSION=2
+STATE_VERSION=3
 
 def now(): return datetime.now(UTC).isoformat()
 def cid(prefix: str, text: str) -> str: return prefix + hashlib.sha1(text.encode()).hexdigest()[:12]
@@ -52,13 +52,37 @@ class GoalRecord:
 
 @dataclass
 class DecisionTrace:
-    selected_action: str; alternatives: list[str]; risk: str; confidence: float; beliefs_used: list[str]; predictions_used: list[str]; reason_codes: list[str]
+    selected_action: str; alternatives: list[str]; risk: str; confidence: float; beliefs_used: list[str]; predictions_used: list[str]; reason_codes: list[str]; predicted_outcome: str=''; expected_cost: float=0.0; expected_reward: float=0.0; execution_required: bool=False; plan_id: str|None=None; rejected_alternatives: list[str]=field(default_factory=list)
+
+@dataclass
+class ActionRecord:
+    id: str; goal_id: str|None; objective: str; action_type: str; tool_used: str; input_summary: str; expected_outcome: str; actual_outcome: str|None=None; success: bool|None=None; confidence_before: float=0.0; confidence_after: float=0.0; duration: float=0.0; retries: int=0; error_type: str|None=None; evidence_ids: list[str]=field(default_factory=list); belief_ids: list[str]=field(default_factory=list); created_at: str=field(default_factory=now)
+
+@dataclass
+class SkillRecord:
+    skill_name: str; prediction_count: int=0; action_count: int=0; success_count: int=0; failure_count: int=0; mean_error: float=0.0; mean_latency: float=0.0; reliability: float=0.0; overconfidence_flag: bool=False; ask_for_help_flag: bool=True; last_updated: str=field(default_factory=now)
+
+@dataclass
+class ToolProfile:
+    tool_name: str; attempts: int=0; successes: int=0; failures: int=0; mean_latency: float=0.0; mean_value_added: float=0.0; failure_modes: dict[str,int]=field(default_factory=dict); trust_score: float=0.5; last_seen: str=field(default_factory=now)
+
+@dataclass
+class PlanRecord:
+    plan_id: str; objective: str; assumptions: list[str]; steps: list[dict[str, Any]]; estimated_risk: str; estimated_cost: float; expected_value: float; fallback_plan: list[dict[str, Any]]; selected_actions: list[str]; belief_ids_used: list[str]; created_at: str=field(default_factory=now); status: str='draft'; goal_id: str|None=None; current_step: int=0; outcome: str|None=None
+
+@dataclass
+class FailureRecord:
+    id: str; action_id: str; plan_id: str|None; failure_type: str; cause_hypothesis: str; recovery_decision: str; effect_on_skill: float; created_at: str=field(default_factory=now)
+
+@dataclass
+class SubGoalRecord:
+    id: str; parent_goal_id: str; objective: str; priority: float; progress: float=0.0; dependencies: list[str]=field(default_factory=list); success_criteria: list[str]=field(default_factory=list); blocking_reason: str|None=None; status: str='pending'
 
 class CognitiveCore:
     def __init__(self, path: str|Path='noor_state.json', memory: SpatialMemoryAgent|None=None, limits: dict[str,int]|None=None, features: dict[str,bool]|None=None):
         self.path=Path(path); self.memory=memory or SpatialMemoryAgent(); self.limits={'max_memories':2000,'max_events':2000,'max_inquiries':100,'max_browser_requests':20,'tick_budget_ms':20,'max_tick_checks':50}|(limits or {})
-        defaults={'memory':True,'beliefs':True,'inquiry':True,'world_model':True,'prediction':True,'self_model':True,'autonomy':True}; defaults.update(features or {}); self.features=defaults
-        self.evidence={}; self.beliefs={}; self.world={}; self.predictions={}; self.goals={}; self.unknowns={}; self.events=[]; self.source_stats={}; self.self_history=[]; self.tick_count=0; self.browser_requests=0; self.version=STATE_VERSION
+        defaults={'memory':True,'beliefs':True,'inquiry':True,'world_model':True,'prediction':True,'self_model':True,'autonomy':True,'action_memory':True,'skill_tracking':True,'planner':True,'recovery':True,'tool_reliability':True,'operational_self_model':True,'operational_memory':True}; defaults.update(features or {}); self.features=defaults
+        self.evidence={}; self.beliefs={}; self.world={}; self.predictions={}; self.goals={}; self.plans={}; self.actions={}; self.skills={}; self.tools={}; self.failures={}; self.subgoals={}; self.operational_memory=[]; self.unknowns={}; self.events=[]; self.source_stats={}; self.self_history=[]; self.tick_count=0; self.browser_requests=0; self.version=STATE_VERSION
         self.load()
     def _append_event(self, typ, payload): self.events.append({'type':typ,'payload':payload,'ts':now()}); self.events=self.events[-self.limits['max_events']:]
     def _domain(self, text):
@@ -74,10 +98,10 @@ class CognitiveCore:
         self.version=data.get('version',1)
         def filt(cls,v):
             names=cls.__dataclass_fields__.keys(); return cls(**{k:v for k,v in v.items() if k in names})
-        self.evidence={k:filt(EvidenceRecord,v) for k,v in data.get('evidence',{}).items()}; self.beliefs={k:filt(BeliefRecord,v) for k,v in data.get('beliefs',{}).items()}; self.world={k:filt(WorldRelation,v) for k,v in data.get('world',{}).items()}; self.predictions={k:filt(PredictionRecord,v) for k,v in data.get('predictions',{}).items()}; self.goals={k:filt(GoalRecord,v) for k,v in data.get('goals',{}).items()}; self.unknowns=data.get('unknowns',{}); self.events=data.get('events',[])[:self.limits['max_events']]; self.source_stats=data.get('source_stats',{}); self.self_history=data.get('self_history',[]); self.tick_count=data.get('tick_count',0); self.browser_requests=data.get('browser_requests',0)
+        self.evidence={k:filt(EvidenceRecord,v) for k,v in data.get('evidence',{}).items()}; self.beliefs={k:filt(BeliefRecord,v) for k,v in data.get('beliefs',{}).items()}; self.world={k:filt(WorldRelation,v) for k,v in data.get('world',{}).items()}; self.predictions={k:filt(PredictionRecord,v) for k,v in data.get('predictions',{}).items()}; self.goals={k:filt(GoalRecord,v) for k,v in data.get('goals',{}).items()}; self.plans={k:filt(PlanRecord,v) for k,v in data.get('plans',{}).items()}; self.actions={k:filt(ActionRecord,v) for k,v in data.get('actions',{}).items()}; self.skills={k:filt(SkillRecord,v) for k,v in data.get('skills',{}).items()}; self.tools={k:filt(ToolProfile,v) for k,v in data.get('tools',{}).items()}; self.failures={k:filt(FailureRecord,v) for k,v in data.get('failures',{}).items()}; self.subgoals={k:filt(SubGoalRecord,v) for k,v in data.get('subgoals',{}).items()}; self.operational_memory=data.get('operational_memory',[]); self.unknowns=data.get('unknowns',{}); self.events=data.get('events',[])[:self.limits['max_events']]; self.source_stats=data.get('source_stats',{}); self.self_history=data.get('self_history',[]); self.tick_count=data.get('tick_count',0); self.browser_requests=data.get('browser_requests',0)
     def save(self):
-        data={name:{k:asdict(v) for k,v in getattr(self,name).items()} for name in ['evidence','beliefs','world','predictions','goals']}
-        data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests}
+        data={name:{k:asdict(v) for k,v in getattr(self,name).items()} for name in ['evidence','beliefs','world','predictions','goals','plans','actions','skills','tools','failures','subgoals']}
+        data|={'version':STATE_VERSION,'unknowns':self.unknowns,'events':self.events[-self.limits['max_events']:],'source_stats':self.source_stats,'self_history':self.self_history[-500:],'tick_count':self.tick_count,'browser_requests':self.browser_requests,'operational_memory':self.operational_memory[-500:]}
         self.path.parent.mkdir(parents=True,exist_ok=True); tmp=self.path.with_suffix(self.path.suffix+'.tmp'); lock=self.path.with_suffix(self.path.suffix+'.lock')
         fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY)
         try:
@@ -191,7 +215,7 @@ class CognitiveCore:
         inq=self.evaluate_inquiry(objective,0.8); beliefs=[b.id for b in self.beliefs.values() if set(tokens(objective)) & set(b.canonical.split())]
         selected=inq['action'] if inq['action'] in available_actions else 'defer'
         if not self.features['beliefs'] and 'ask_human' in available_actions: selected='ask_human'
-        return DecisionTrace(selected,available_actions,'low' if selected!='search' else 'medium',1-inq['uncertainty'],beliefs,[],[f"meta:{inq['meta_state']}",f"iv:{inq['information_value']:.2f}",f"gain:{inq['expected_gain']:.2f}"])
+        return DecisionTrace(selected,available_actions,'low' if selected!='search' else 'medium',1-inq['uncertainty'],beliefs,[],[f"meta:{inq['meta_state']}",f"iv:{inq['information_value']:.2f}",f"gain:{inq['expected_gain']:.2f}"], predicted_outcome='usable_evidence' if selected=='search' else 'needs_resolution', expected_cost=inq['cost'], expected_reward=inq['expected_gain'], execution_required=selected in {'search','record_memory'})
     def tick(self):
         if not self.features['autonomy']: return {'action':'disabled'}
         start=time.perf_counter(); self.tick_count+=1; action='idle'; checked=0; reason=['no_priority_instability']
@@ -220,6 +244,100 @@ class CognitiveCore:
             st=self.source_stats.setdefault('source:'+host,{'observations':0,'reliability':self.source_credibility(r.get('url') or host,'browser')}); st['observations']+=1; st['reliability']=clamp((st['reliability']*(st['observations']-1)+score)/st['observations'])
         if not ev: self._append_event('inquiry.search_failed',{'proposition':proposition,'reason':'no_usable_evidence'}); self.save(); raise ValueError('search results contained no usable evidence')
         self._append_event('inquiry.search_evidence_attached',{'proposition':proposition,'count':len(ev)}); self.save(); return ev
+
+    def _skill_name(self, action_type, tool_used): return f"{tool_used}_{action_type}" if tool_used != action_type else action_type
+    def _tool(self, tool_name):
+        return self.tools.setdefault(tool_name, ToolProfile(tool_name))
+    def _skill(self, skill_name):
+        return self.skills.setdefault(skill_name, SkillRecord(skill_name))
+    def _update_mean(self, old, count, value): return ((old*(count-1))+value)/count if count else value
+    def update_operational_stats(self, action: ActionRecord, value_added=0.0):
+        if self.features.get('tool_reliability', True):
+            t=self._tool(action.tool_used); t.attempts+=1; t.last_seen=now(); t.mean_latency=self._update_mean(t.mean_latency,t.attempts,action.duration); t.mean_value_added=self._update_mean(t.mean_value_added,t.attempts,value_added)
+            if action.success: t.successes+=1
+            else:
+                t.failures+=1; t.failure_modes[action.error_type or 'unknown']=t.failure_modes.get(action.error_type or 'unknown',0)+1
+            t.trust_score=clamp((t.successes+0.5)/(t.attempts+1) + t.mean_value_added*0.1)
+        if self.features.get('skill_tracking', True):
+            s=self._skill(self._skill_name(action.action_type, action.tool_used)); s.action_count+=1; s.last_updated=now(); s.mean_latency=self._update_mean(s.mean_latency,s.action_count,action.duration)
+            if action.success: s.success_count+=1
+            else: s.failure_count+=1
+            err=abs((1.0 if action.success else 0.0)-action.confidence_before); s.mean_error=self._update_mean(s.mean_error,s.action_count,err); s.reliability=clamp(s.success_count/s.action_count if s.action_count else 0); s.overconfidence_flag=s.mean_error>=0.45 and action.confidence_before>=0.6; s.ask_for_help_flag=s.reliability<0.5 or s.overconfidence_flag
+    def record_action(self, objective, action_type, tool_used, expected_outcome, actual_outcome=None, success=None, goal_id=None, input_summary='', confidence_before=0.5, duration=0.0, retries=0, error_type=None, evidence_ids=None, belief_ids=None):
+        if not self.features.get('action_memory', True): return None
+        if success is None and actual_outcome is None: raise ValueError('action outcome is required')
+        if success is None: success = actual_outcome == expected_outcome
+        confidence_after=clamp(confidence_before + (0.2 if success else -0.25))
+        a=ActionRecord(cid('a_', objective+action_type+tool_used+now()), goal_id, objective, action_type, tool_used, input_summary, expected_outcome, actual_outcome, bool(success), confidence_before, confidence_after, duration, retries, error_type, evidence_ids or [], belief_ids or [])
+        self.actions[a.id]=a; self.update_operational_stats(a, confidence_after-confidence_before)
+        if self.features.get('operational_memory', True):
+            self.operational_memory.append({'action_id':a.id,'objective':objective,'tool':tool_used,'action_type':action_type,'success':a.success,'error_type':error_type,'ts':a.created_at}); self.operational_memory=self.operational_memory[-500:]
+        self._append_event('action.recorded', asdict(a)); self.save(); return a
+    def decompose_goal(self, goal_id):
+        g=self.goals[goal_id]; parts=[p.strip() for p in re.split(r'\bthen\b|;|,', g.objective) if p.strip()]
+        if len(parts)<=1 and len(tokens(g.objective))>5: parts=[g.objective, 'verify outcome']
+        out=[]
+        for i,part in enumerate(parts):
+            sg=SubGoalRecord(cid('sg_',goal_id+part+str(i)), goal_id, part, clamp(g.priority-(i*0.05)), dependencies=[out[-1].id] if out else [], success_criteria=[part+' done'])
+            self.subgoals[sg.id]=sg; out.append(sg)
+        self.save(); return out
+    def _select_tool_for_step(self, objective):
+        low=objective.lower(); candidates=['memory_retrieval']
+        if any(x in low for x in ['search','browser','documented','docs','verify']): candidates=['browser_search','memory_retrieval']
+        if any(x in low for x in ['tap','adb','device','text','wake']): candidates=['adb_tap','ask_human']
+        if not self.features.get('tool_reliability', True): return candidates[0]
+        return max(candidates, key=lambda t:self.tools.get(t, ToolProfile(t)).trust_score)
+    def create_plan(self, objective, goal_id=None, available_tools=None):
+        if not self.features.get('planner', True): return None
+        state=self.meta_state(objective); beliefs=[b.id for b in self.beliefs.values() if set(tokens(objective)) & set(b.canonical.split())]
+        assumptions=[] if state=='unknown' else [f'meta_state:{state}']
+        risk='medium' if state in {'unknown','contradictory','suspended'} else 'low'
+        status='rejected' if state=='unknown' and 'dangerous' in objective.lower() else 'ready'
+        chunks=[objective]
+        if goal_id and goal_id in self.goals:
+            chunks=[sg.objective for sg in self.decompose_goal(goal_id)] or chunks
+        steps=[]; selected=[]
+        for i,ch in enumerate(chunks):
+            tool=self._select_tool_for_step(ch); action_type='ask_human' if tool=='ask_human' else 'search' if tool=='browser_search' else 'tap' if tool.startswith('adb') else 'retrieve'
+            step={'step_id':f'step_{i+1}','objective':ch,'action_type':action_type,'tool_used':tool,'expected_outcome':'success','status':'pending','retries':0}; steps.append(step); selected.append(tool)
+        fallback=[{'action':'ask_human','reason':'low_skill_or_failed_step'}]
+        expected_value=max(0.1, 1.0-(0.2*len(steps))-(0.3 if risk=='medium' else 0))
+        plan=PlanRecord(cid('pl_', objective+now()), objective, assumptions, steps, risk, 0.2*len(steps), expected_value, fallback, selected, beliefs, goal_id=goal_id, status=status)
+        self.plans[plan.plan_id]=plan; self._append_event('plan.created', asdict(plan)); self.save(); return plan
+    def recover_from_failure(self, action, plan=None, failure_type=None):
+        if not self.features.get('recovery', True): return 'abort'
+        tool=self.tools.get(action.tool_used, ToolProfile(action.tool_used)); skill=self.skills.get(self._skill_name(action.action_type,action.tool_used), SkillRecord(self._skill_name(action.action_type,action.tool_used)))
+        if action.retries<1 and tool.trust_score>=0.2 and (failure_type or action.error_type) not in {'permission_denied','unsafe'}: decision='retry'
+        elif skill.ask_for_help_flag or tool.trust_score<0.45: decision='ask_human'
+        else: decision='alternative_action'
+        f=FailureRecord(cid('f_', action.id+now()), action.id, plan.plan_id if plan else None, failure_type or action.error_type or 'unknown', f'{action.tool_used} failed with reliability {tool.trust_score:.2f}', decision, -0.1)
+        self.failures[f.id]=f; self._append_event('recovery.decided', asdict(f)); self.save(); return decision
+    def execute_plan(self, plan_id, outcomes=None):
+        plan=self.plans[plan_id]; outcomes=outcomes or {}; plan.status='running'; executed=[]
+        for step in plan.steps[plan.current_step:]:
+            before=self.tools.get(step['tool_used'], ToolProfile(step['tool_used'])).trust_score
+            spec=outcomes.get(step['step_id'], outcomes.get(step['tool_used'], outcomes.get(step['action_type'], {})))
+            if isinstance(spec, bool): spec={'success':spec,'actual_outcome':'success' if spec else 'failure'}
+            if not spec: spec={'success':False,'actual_outcome':None,'error_type':'missing_outcome'}
+            a=self.record_action(step['objective'], step['action_type'], step['tool_used'], step['expected_outcome'], spec.get('actual_outcome'), spec.get('success'), plan.goal_id, step['objective'][:80], before, spec.get('duration',0.0), step.get('retries',0), spec.get('error_type'), belief_ids=plan.belief_ids_used)
+            executed.append(a.id if a else None); step['status']='succeeded' if a and a.success else 'failed'
+            if not a or not a.success:
+                decision=self.recover_from_failure(a, plan, spec.get('error_type')) if a else 'abort'; step['recovery_decision']=decision
+                if decision=='retry': step['retries']=step.get('retries',0)+1; plan.status='recovering'
+                elif decision=='alternative_action': step['tool_used']='memory_retrieval'; step['action_type']='retrieve'; plan.status='recovering'
+                elif decision=='ask_human': plan.status='blocked'; plan.outcome='needs_human_help'
+                else: plan.status='failed'; plan.outcome='aborted'
+                self.save(); return {'plan_id':plan_id,'status':plan.status,'executed_actions':executed,'recovery_decision':decision}
+            plan.current_step+=1
+        plan.status='completed'; plan.outcome='success'
+        if plan.goal_id and plan.goal_id in self.goals: self.goals[plan.goal_id].progress=1.0; self.goals[plan.goal_id].status='completed'
+        self._append_event('plan.completed', {'plan_id':plan_id,'actions':executed}); self.save(); return {'plan_id':plan_id,'status':plan.status,'executed_actions':executed}
+    def operational_self_model(self):
+        if not self.features.get('operational_self_model', True): return {}
+        if not self.actions: return {}
+        weak=[s.skill_name for s in self.skills.values() if s.ask_for_help_flag]; strong=[s.skill_name for s in self.skills.values() if s.action_count>=2 and s.reliability>=0.7]
+        tools={t.tool_name:{'trust_score':t.trust_score,'attempts':t.attempts,'failure_modes':t.failure_modes} for t in self.tools.values()}
+        return {'strong_skills':strong,'weak_skills':weak,'tools':tools,'failure_patterns':{f.failure_type:sum(1 for x in self.failures.values() if x.failure_type==f.failure_type) for f in self.failures.values()},'should_ask_for_help':bool(weak)}
     def knows(self, proposition): return self.meta_state(proposition) == 'known'
 
 cognitive_core=CognitiveCore(Path('noor_state.json'))

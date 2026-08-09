@@ -237,3 +237,127 @@ def test_anti_fake_claim_invariants(tmp_path):
     with pytest.raises(ValueError):
         c.run_inquiry_results('claim', [])
     assert all(r.evidence for r in c.world.values())
+
+
+def test_action_memory_records_outcomes_and_updates_skill_and_tool(tmp_path):
+    c=core(tmp_path)
+    a=c.record_action('find docs','search','browser_search','success','success',True,duration=0.2,confidence_before=0.5)
+    assert a.id in c.actions
+    assert c.skills['browser_search_search'].success_count == 1
+    assert c.tools['browser_search'].trust_score > 0.5
+    assert c.operational_memory[-1]['success'] is True
+    with pytest.raises(ValueError):
+        c.record_action('fake success','search','browser_search','success')
+
+
+def test_planner_creates_inspectable_plan_and_decomposes_goal(tmp_path):
+    c=core(tmp_path)
+    g=c.create_goal('search docs then verify device state',0.8,'test',['docs found','device verified'])
+    plan=c.create_plan(g.objective,g.id)
+    assert plan.plan_id in c.plans
+    assert len(c.subgoals) >= 2
+    assert len(plan.steps) >= 2
+    assert plan.fallback_plan[0]['action'] == 'ask_human'
+    assert plan.status == 'ready'
+
+
+def test_plan_execution_updates_after_each_step_and_completes_goal(tmp_path):
+    c=core(tmp_path)
+    g=c.create_goal('search docs then verify device state',0.8,'test')
+    plan=c.create_plan(g.objective,g.id)
+    out=c.execute_plan(plan.plan_id, {
+        'step_1': {'success': True, 'actual_outcome': 'success', 'duration': 0.1},
+        'step_2': {'success': True, 'actual_outcome': 'success', 'duration': 0.1},
+    })
+    assert out['status'] == 'completed'
+    assert len(out['executed_actions']) == len(plan.steps)
+    assert c.goals[g.id].status == 'completed'
+    assert all(a.success for a in c.actions.values())
+
+
+def test_recovery_changes_plan_after_failure_and_retry_is_not_success(tmp_path):
+    c=core(tmp_path)
+    c.tools['browser_search']=c._tool('browser_search')
+    c.tools['browser_search'].trust_score=0.8
+    plan=c.create_plan('search docs')
+    out=c.execute_plan(plan.plan_id, {'step_1': {'success': False, 'actual_outcome': 'timeout', 'error_type': 'timeout'}})
+    action=next(iter(c.actions.values()))
+    assert action.success is False
+    assert out['status'] == 'recovering'
+    assert out['recovery_decision'] == 'retry'
+    assert c.failures
+    assert c.skills['browser_search_search'].failure_count == 1
+
+
+def test_low_reliability_tool_causes_human_help_recovery(tmp_path):
+    c=core(tmp_path)
+    c.tools['browser_search']=c._tool('browser_search')
+    c.tools['browser_search'].trust_score=0.1
+    plan=c.create_plan('search docs')
+    out=c.execute_plan(plan.plan_id, {'step_1': {'success': False, 'actual_outcome': 'bad', 'error_type': 'permission_denied'}})
+    assert out['status'] == 'blocked'
+    assert out['recovery_decision'] == 'ask_human'
+    assert c.operational_self_model()['should_ask_for_help'] is True
+
+
+def test_tool_reliability_changes_future_tool_choice(tmp_path):
+    c=core(tmp_path)
+    for _ in range(3):
+        c.record_action('search docs','search','browser_search','success','bad',False,error_type='bad_result',confidence_before=0.8)
+    for _ in range(3):
+        c.record_action('retrieve memory','retrieve','memory_retrieval','success','success',True,confidence_before=0.5)
+    plan=c.create_plan('search documented fact')
+    assert plan.steps[0]['tool_used'] == 'memory_retrieval'
+
+
+def test_decision_trace_binds_to_execution_requirements(tmp_path):
+    c=core(tmp_path)
+    d=c.decide('unknown critical fact',['search','ask_human'])
+    assert d.execution_required is True
+    assert d.predicted_outcome == 'usable_evidence'
+    assert d.expected_reward > 0
+    assert 'ask_human' in d.alternatives
+
+
+def test_operational_state_persists_after_restart(tmp_path):
+    c=core(tmp_path)
+    plan=c.create_plan('search docs')
+    c.execute_plan(plan.plan_id, {'step_1': {'success': True, 'actual_outcome': 'success'}})
+    c.save()
+    c2=core(tmp_path)
+    assert c2.plans and c2.actions and c2.skills and c2.tools and c2.operational_memory
+    assert c2.operational_self_model()['tools']
+
+
+def test_operational_causality_feature_ablation(tmp_path):
+    no_planner=core(tmp_path/'no_planner', planner=False)
+    assert no_planner.create_plan('search docs') is None
+    no_action=core(tmp_path/'no_action', action_memory=False)
+    assert no_action.record_action('x','search','browser_search','success','success',True) is None
+    assert not no_action.skills
+    no_skill=core(tmp_path/'no_skill', skill_tracking=False)
+    no_skill.record_action('x','search','browser_search','success','bad',False)
+    assert not no_skill.skills and no_skill.tools
+    no_tool=core(tmp_path/'no_tool', tool_reliability=False)
+    no_tool.record_action('x','search','browser_search','success','success',True)
+    assert not no_tool.tools and no_tool.skills
+    no_recovery=core(tmp_path/'no_recovery', recovery=False)
+    plan=no_recovery.create_plan('search docs')
+    out=no_recovery.execute_plan(plan.plan_id, {'step_1': {'success': False, 'actual_outcome': 'bad'}})
+    assert out['recovery_decision'] == 'abort'
+    no_op_self=core(tmp_path/'no_op_self', operational_self_model=False)
+    no_op_self.record_action('x','search','browser_search','success','bad',False)
+    assert no_op_self.operational_self_model() == {}
+
+
+def test_long_run_skill_simulation_improves_tool_choice_and_help(tmp_path):
+    c=core(tmp_path)
+    for i in range(40):
+        c.record_action(f'browser task {i}','search','browser_search','success','bad',False,error_type='bad_result',confidence_before=0.8)
+    for i in range(40):
+        c.record_action(f'memory task {i}','retrieve','memory_retrieval','success','success',True,confidence_before=0.5)
+    sm=c.operational_self_model()
+    assert c.skills['memory_retrieval_retrieve'].reliability > c.skills['browser_search_search'].reliability
+    assert c.tools['memory_retrieval'].trust_score > c.tools['browser_search'].trust_score
+    assert 'browser_search_search' in sm['weak_skills']
+    assert c.create_plan('search documented fact').steps[0]['tool_used'] == 'memory_retrieval'

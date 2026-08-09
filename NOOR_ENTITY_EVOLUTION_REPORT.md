@@ -1,113 +1,138 @@
-# Noor Entity Evolution Report
+# Noor Entity Evolution Report — Final Hardening
 
-## 1. What existed before
+## 1. What is now causal
 
-The prior repository was a request/response prototype with a coordinator, in-memory spatial memory, a browser helper, policy heuristics, a grid vision fallback, an ADB bridge, and a dashboard. It did not contain durable beliefs, evidence records, prediction errors, inquiry decisions, world state, or a self-model derived from outcomes.
+- Beliefs are created and revised only by validated evidence records. Every confidence update stores the evidence id, before/after confidence, effective relation, evidence weight, and timestamp in the belief audit trail.
+- Evidence impact is causally moderated by source credibility, evidence strength, browser result quality, source history, and contradiction handling.
+- Browser search success requires usable, scored, deduplicated results. Empty, duplicate-only, or low-value results produce observable `inquiry.search_failed` events instead of knowledge claims.
+- Inquiry action selection uses meta-state, importance, expected gain, search cost, source credibility assumptions, and contradiction severity. It can search, ask, defer, idle, or act despite uncertainty.
+- World relations are backed by evidence ids and include typed relation state, confidence, temporal hints, and ambiguity handling.
+- Self-model output is derived from prediction/outcome history by domain and action type. It reports strengths, weaknesses, overconfidence risk, and help-seeking recommendations only when history exists.
+- Autonomy ticks are bounded by check count and time budget. Each tick records an action/state plus reason codes.
+- Persistence includes a state version, migration hook, atomic temp-file replacement, and a write lock guard.
 
-## 2. What changed
+## 2. What remains heuristic
 
-This iteration adds a compact cognitive core inside the existing backend. It keeps the existing stack and service layout, but adds testable internal state for evidence, beliefs, world relations, goals, predictions, outcomes, learning statistics, inquiry decisions, autonomy ticks, and JSON persistence.
+- Semantic belief normalization is intentionally lightweight. It uses canonical terms, aliases, relation hints, polarity, stop-word removal, and equivalence thresholds; it is not a full natural-language understanding system.
+- World extraction uses constrained lexical patterns for entities, relations, causes, and temporal hints. Ambiguous text is marked weak or ambiguous instead of being interpreted with false precision.
+- Source credibility is a practical scoring heuristic based on source type, URL/domain hints, result content hints, and source history. It is not a truth oracle.
+- Inquiry value-of-information is a transparent formula, not an optimal Bayesian planner.
+- Self-model domain detection uses domain/action hints from recorded predictions. It is inspectable but still prototype-level.
 
-## 3. New files
+## 3. What is durable after restart
 
-- `backend/app/cognitive_core.py`: the cognitive state engine.
-- `backend/tests/test_cognitive_core.py`: unit, integration, causal ablation, anti-fake, persistence, and 10,000 tick simulation tests.
-- `NOOR_ENTITY_EVOLUTION_REPORT.md`: this report.
+- Evidence records, belief clusters, aliases, contradiction counts, audit trails, world relations, predictions, goals, unknowns, events, source statistics, self-history, browser request counts, tick count, and state version persist to JSON.
+- Restart consistency is protected by atomic write replacement and a lock file. Simulated partial write failure leaves the previous state readable.
 
-## 4. Belief architecture
+## 4. What is still prototype
 
-A belief has proposition, confidence, supporting evidence ids, counter-evidence ids, source, timestamps, last-tested timestamp, prediction history, contradiction count, revision count, status, and audit trail. Confidence changes only through evidence or prediction outcome evidence. Counter-evidence lowers confidence and records a before/after audit entry.
+- The persistence backend is hardened JSON, not a database or multi-process transactional store.
+- Semantic clustering is lightweight and local to proposition text; it does not call embeddings or an LLM.
+- Browser scoring is conservative and rejects many weak results; it does not perform full webpage retrieval or fact extraction.
+- The scheduler is bounded and introspective, not a general autonomous planner.
 
-## 5. Evidence architecture
+## 5. What must not be claimed
 
-Evidence records require a non-empty claim and source. Each record has source type, source reliability, support/contradict relation, strength, collection time, and metadata. LLM-originated data is treated as a source type only; it cannot mutate authoritative state without passing the same validation.
+- Do not claim consciousness, sentience, emotions, self-awareness, personhood, or living agency.
+- Do not claim visual object recognition beyond the implemented vision fallback unless a real adapter is added and tested.
+- Do not claim browser search creates strong knowledge automatically; it only attaches scored evidence when usable.
+- Do not claim the self-model is introspective awareness; it is an outcome-history summary.
+- Do not claim world relations are facts without backing evidence and confidence.
 
-## 6. World Model
+## 6. Tests that prevent pretending
 
-The world model stores relation records with subject, relation, object, confidence, evidence ids, and update time. It is updated from beliefs and evidence, and can be disabled in causal ablation tests to prove behavior differs.
+- Semantic normalization clusters alias propositions and detects contradiction across different phrasings.
+- Relation extraction tests verify typed causal/temporal relations and ambiguous-state handling.
+- Inquiry tests verify different decisions under changed importance, contradiction, and search cost.
+- Browser evidence tests verify scoring, source credibility impact, deduplication, rejection, and observable failure.
+- Self-model tests verify domain-specific differences and help-seeking flags from actual prediction outcomes.
+- Persistence tests verify roundtrip, versioning, and partial-write safety.
+- Scheduler tests verify idle behavior, reason codes, and bounded checks.
+- Anti-fake tests block evidence-free beliefs, source-free evidence, search success without evidence, self-model claims without history, unbacked world relations, and forbidden consciousness-like interface claims.
+- Long-term simulation runs 10,000 ticks and checks bounded events and stable belief count.
 
-## 7. Inquiry Loop
+## 7. Operational note about the reported startup failure
 
-The inquiry engine computes meta-state, uncertainty, information value, resource limits, and selected action. It can choose search, ask human, reason internally, defer, or act despite uncertainty. Browser search results are no longer a terminal output only: usable results become evidence through `run_inquiry_results`; empty results cannot be considered success.
+The reported Windows startup log shows Uvicorn reached application startup and then failed with `Errno 10048` binding `127.0.0.1:8000`. That error means port 8000 was already occupied by another process; it is not an application import/startup failure. The backend was verified on a free port during this hardening pass. To run locally when port 8000 is occupied, stop the existing process or choose another port, for example `python -m uvicorn app.main:app --host 127.0.0.1 --port 8765` with `PYTHONPATH=backend` from the repository root, or equivalent `PYTHONPATH=src` if running from a service layout that imports `src.main`.
 
-## 8. Prediction and Learning
+## 8. Operational intelligence hardening after critique
 
-The prediction engine stores expected outcomes and probabilities. When an outcome is recorded, it computes prediction error. Prediction outcomes generate support or counter-evidence for linked beliefs. Learning statistics update source/domain performance, producing self-model data from history rather than random variables.
+The hardening critique showed that Noor had epistemic state but not enough operational competence. This pass adds inspectable operational state without replacing the existing backend stack:
 
-## 9. Self Model
+- `ActionRecord` stores each meaningful action with objective, goal link, tool, expected/actual outcome, success flag, confidence before/after, duration, retries, error type, and evidence/belief links.
+- `SkillRecord` derives operational skill reliability from action counts, successes, failures, mean error, latency, and overconfidence/help flags.
+- `ToolProfile` tracks attempts, successes, failures, latency, value added, failure modes, trust score, and last use for each tool.
+- `PlanRecord` stores decomposed, inspectable plans with assumptions, steps, risk, cost, expected value, fallback actions, selected tools, backing belief ids, status, and progress.
+- `FailureRecord` stores failure type, cause hypothesis, recovery decision, and effect on skill after failed actions.
+- `SubGoalRecord` turns larger goals into progress-bearing subgoals with dependencies and success criteria.
+- Operational memory stores compact execution episodes so future decisions can be influenced by what worked and failed.
 
-The self-model reports prediction count, accuracy, and mean error by domain. It is derived only from resolved predictions. If the self-model feature is disabled, outcome resolution still works but self-model statistics do not update.
+## 9. What Noor can now do operationally
 
-## 10. Autonomous Loop
+- Create a plan from a goal/objective, choose tools from current tool reliability, and refuse planner output when planner support is disabled.
+- Execute a plan step-by-step, record each action outcome, update skill and tool state after each step, and complete or block the parent goal based on real outcomes.
+- React to failure with retry, alternative action, ask-human, defer/abort style recovery decisions instead of blind repetition.
+- Prefer tools with better accumulated trust over tools with repeated failures.
+- Persist plans, actions, skills, tool profiles, failures, subgoals, and operational memory across restart.
+- Produce an operational self-model only from action history, skill stats, tool reliability, plan outcomes, and failure patterns.
 
-The life loop is a bounded `tick()` scheduler. Each tick examines uncertain or contradictory beliefs and may choose inquiry-related action, or idle. It has a tick budget and bounded event history. Autonomy does not imply constant action.
+## 10. What improved measurably
 
-## 11. Persistence
+- Multi-step execution tests show `plan -> step -> outcome -> update -> next step` rather than one-shot success.
+- Long-run simulation tests drive browser failures and memory successes repeatedly, then verify that tool trust and skill reliability diverge and future plans choose the better tool.
+- Recovery tests verify failed actions remain failures, retries are not counted as success, and low-reliability or unsafe failures trigger human help.
+- Causality tests show disabling planner, action memory, skill tracking, recovery, tool reliability, or operational self-model changes behavior/state.
 
-The cognitive core persists evidence, beliefs, world model, predictions, goals, events, learning history, ticks, and browser request count to JSON. This is intentionally simple and avoids adding a database.
+## 11. Operational limits still present
 
-## 12. Causal tests
+- Plan generation is heuristic and local to current beliefs, world state, objective text, and stored tool/skill history. It is not a full task planner.
+- Tool execution is represented by recorded outcomes supplied by adapters/tests; actions are not allowed to claim success without an actual outcome.
+- Recovery cause hypotheses are transparent heuristics based on error type and reliability, not deep root-cause analysis.
+- Operational memory is compact JSON state, not a production event store.
 
-The tests disable memory, beliefs, inquiry, world model, prediction, self-model, and autonomy and compare behavior. Examples: no belief engine makes the decision ask a human instead of search; no inquiry selects internal reasoning; no autonomy disables ticks; no world model prevents relation creation.
+## 12. Additional anti-fake claims now enforced
 
-## 13. Long-term simulation
+Do not claim:
 
-A test runs 10,000 ticks without human input and verifies tick count, event bounds, stable belief count, and scheduler stability.
+- Noor knows how to execute a task unless there is supporting action/skill history.
+- Noor succeeded unless an `ActionRecord` or `PlanRecord` contains an actual successful outcome.
+- Noor recovered unless a failure produced a `FailureRecord` and a recovery decision.
+- Noor is operationally competent in a tool unless `SkillRecord` and `ToolProfile` history support that claim.
+- Noor is autonomous beyond bounded plan/action/outcome loops.
 
-## 14. Security and anti-fake tests
+## 13. Skill generalization and transfer hardening
 
-Tests prevent evidence-free belief creation, confidence changes without evidence path, search success without evidence, LLM authoritative writes without validation, and frontend/README claims of consciousness or self-awareness.
+This pass adds a transfer layer above operational competence. It still avoids any consciousness/personhood claim: generalization is represented only by records derived from repeated plans, action outcomes, transfer tests, benchmarks, drift signals, and debug traces.
 
-## 15. Test count before and after
+### What Noor can now generalize
 
-- Before this iteration: 19 backend tests passed.
-- After this iteration: 31 backend tests pass.
+- Repeated successful plan structures can become `ProcedureRecord` templates with objective type, preconditions, reusable steps, fallback steps, tool sequence, expected outcomes, failure modes, confidence, lifecycle state, and source plan/action ids.
+- Repeated procedure structures can become `TaskTemplateRecord` skeletons such as search/evaluate or inspect/recover patterns.
+- Skill transfer is represented by explicit `TransferRecord` tests. Transfer confidence does not become valid until cross-domain validation records a success or failure.
+- Competence summaries expose successful procedures, failed procedures, transferable patterns, common recovery choices, and domain drift summaries as state used by planning.
 
-## 16. Failed tests and causes during implementation
+### What remains domain-specific
 
-- Initial cognitive tests exposed that weak browser evidence was treated as known. Fixed by making `knows()` require `known`, not merely `likely`.
-- Initial ablation tests exposed feature overrides were merged incorrectly, making disabled components stay enabled. Fixed by applying explicit feature overrides after defaults.
-- Self-model ablation initially had no causal effect. Fixed by preventing learning stats updates when `self_model` is disabled.
+- Procedure induction depends on repeated matching plan structures; a single success is insufficient.
+- Transfer is partial and bounded by tested source/target skill pairs. Browser search success does not automatically imply ADB competence.
+- Benchmarks are only as broad as recorded action outcomes in each domain/task type.
 
-## 17. Hostile engineering critique
+### Benchmarking, drift, and debugging
 
-- Noor is still a prototype. It now has inspectable cognitive state, but it is not a living system.
-- Belief revision is deterministic and evidence-weighted, but the proposition matcher is still simple exact-normalized text. It does not solve semantic equivalence.
-- World modeling uses a simple subject/relation/object parser from text. It is auditable, but shallow.
-- Inquiry can decide to search, but production browser evidence extraction remains thin and source reliability is crude.
-- The autonomous loop is bounded and testable, but it is not a rich planner. It mostly inspects uncertainty and decides whether inquiry is worthwhile.
-- Learning is real state change from prediction error, but it is statistical bookkeeping, not model training or deep skill acquisition.
-- Persistence uses JSON, which is good for simplicity but weak for concurrent production use.
-- The self-model is a performance summary. It is causal and history-derived, but narrow.
+- `BenchmarkRecord` measures sample size, success rate, mean error, latency, retry rate, recovery rate, help-request rate, and trend.
+- Drift detection compares baseline and recent performance, degrades affected skills/procedures, and activates help-seeking when success rate or latency worsens.
+- `DebugRecord` links a failure to a cause hypothesis, similar past failures, selected fix, confidence, and optionally a reused procedure.
 
-## 18. Fixes after critique
+### What changed after critique
 
-The critique identified three concrete weaknesses that were fixed in code before final testing:
+- Noor no longer treats operational repetition as mere history; repeated success can induce reusable procedures.
+- Noor no longer treats transfer as assumed; transfer must be tested and can fail.
+- Noor no longer treats skill confidence as static; benchmarks, drift, procedures, and tool trust calibrate action confidence.
+- Noor no longer repeats failures without introspection; failure records can produce debug traces and update procedure failure modes.
 
-1. Browser evidence was too easily promoted to knowledge; `knows()` now requires the `known` meta-state.
-2. Feature ablation was not actually disabling components due to merge order; explicit overrides now take precedence.
-3. Self-model ablation was not causal; prediction outcome learning now respects the `self_model` feature flag.
+### Additional claims that must not be made
 
-## 19. What could not be built here
-
-- Real semantic belief merging beyond manual `merge_beliefs`.
-- Durable multi-process storage with locking.
-- Full browser evidence credibility scoring across independent sources.
-- A rich planner or society-of-minds implementation. This iteration does not fake those.
-- True multimodal vision. The vision layer remains an honest grid fallback.
-
-## 20. What proves Noor became more independent
-
-The proof is not language. It is code and tests:
-
-1. Unknown propositions produce explicit meta-state.
-2. Inquiry decisions derive from uncertainty, importance, and resource budgets.
-3. Search results must become evidence or fail.
-4. Evidence revises beliefs with an audit trail.
-5. Predictions create measurable errors when outcomes arrive.
-6. Errors update belief and self-model statistics.
-7. Decisions change when beliefs, inquiry, world model, prediction, self-model, memory, or autonomy are ablated.
-8. State survives restart through JSON persistence.
-9. A 10,000-tick loop stays bounded and stable.
-
-No claim of consciousness or self-awareness is made.
+- Do not claim general competence without induced procedures and benchmark history.
+- Do not claim transfer without `TransferRecord.test_result` from another target skill/domain.
+- Do not claim robustness without benchmark and drift evidence.
+- Do not claim self-correction without `FailureRecord` plus `DebugRecord` evidence.

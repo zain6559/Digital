@@ -80,6 +80,8 @@ def test_orchestrator_high_concurrency_policy_interventions():
 
 
 def test_adb_timeout_forces_process_exit(tmp_path, monkeypatch):
+    from app import mobile_bridge as module
+    monkeypatch.setattr(module.settings, 'noor_enable_mobile_bridge', True)
     sleeper = tmp_path / 'adb'
     sleeper.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(30)\n')
     sleeper.chmod(0o755)
@@ -106,7 +108,7 @@ def test_llm_stream_parser_repairs_malformed_lines():
 def test_hybrid_routing_local_vs_cloud(monkeypatch):
     from app import llm_client as module
     monkeypatch.setattr(module.settings, 'llm_mode', 'hybrid')
-    monkeypatch.setattr(module.settings, 'openai_api_key', 'sk-test')
+    monkeypatch.setattr(module.settings, 'openai_api_key', 'test-openai-key')
     monkeypatch.setattr(module.settings, 'anthropic_api_key', '')
     monkeypatch.setattr(module.settings, 'gemini_api_key', '')
     client = module.HybridLLMClient(base_url='http://localhost:1')
@@ -142,11 +144,11 @@ def test_provider_payload_normalization_for_tool_and_vision_shapes():
 def test_local_failure_can_fallback_without_leaking_api_key(monkeypatch):
     from app import llm_client as module
     monkeypatch.setattr(module.settings, 'llm_mode', 'hybrid')
-    monkeypatch.setattr(module.settings, 'openai_api_key', 'sk-secret-value')
+    monkeypatch.setattr(module.settings, 'openai_api_key', 'redacted-test-key')
     monkeypatch.setattr(module.settings, 'hybrid_fallback_enabled', True)
     client = module.HybridLLMClient(base_url='http://localhost:1')
     assert client._is_local_failure_retryable(RuntimeError('CUDA OOM')) is True
-    assert 'sk-secret-value' not in str(client.route('security audit', risk='high'))
+    assert 'redacted-test-key' not in str(client.route('security audit', risk='high'))
 
 
 def test_policy_intent_context_action_confidence():
@@ -198,7 +200,9 @@ def test_self_healing_rejects_low_confidence_plan():
     asyncio.run(run())
 
 
-def test_mobile_args_validation_and_text_sanitizing():
+def test_mobile_args_validation_and_text_sanitizing(monkeypatch):
+    from app import mobile_bridge as module
+    monkeypatch.setattr(module.settings, 'noor_enable_mobile_bridge', True)
     bridge = MobileBridge()
     assert bridge._args_for(DeviceCommand(action='text', text='hello % world\n'))[-1] == 'hello%sworld'
     try:
@@ -231,3 +235,73 @@ def test_backend_smoke_health_and_command():
         res = client.post('/api/command', json={'prompt': 'remember api smoke test', 'context': {}})
         assert res.status_code == 200
         assert res.json()['status'] == 'completed'
+
+
+def test_mobile_disabled_path_is_explicit(monkeypatch):
+    from app import mobile_bridge as module
+    monkeypatch.setattr(module.settings, 'noor_enable_mobile_bridge', False)
+    bridge = MobileBridge()
+    try:
+        bridge._validate_args(('devices',))
+    except RuntimeError as exc:
+        assert 'disabled by configuration' in str(exc)
+    else:
+        raise AssertionError('disabled mobile bridge accepted args')
+
+
+def test_browser_disabled_path_is_explicit(monkeypatch):
+    from app import browser_engine as module
+    monkeypatch.setattr(module.settings, 'noor_enable_browser_automation', False)
+    async def run():
+        try:
+            await module.BrowserEngine().run_safe_search('docs')
+        except RuntimeError as exc:
+            assert 'disabled by configuration' in str(exc)
+        else:
+            raise AssertionError('disabled browser automation ran')
+    asyncio.run(run())
+
+
+def test_websocket_bounded_replay_and_command_event_smoke():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.websocket import bus
+    async def seed():
+        await bus.publish(Event(type='release.one', payload={}))
+        await bus.publish(Event(type='release.two', payload={}))
+    asyncio.run(seed())
+    with TestClient(app) as client:
+        with client.websocket_connect('/ws', headers={'origin': 'http://localhost:3000'}) as ws:
+            seen = [ws.receive_json() for _ in range(50)]
+            types = [e['type'] for e in seen]
+            assert 'release.one' in types and 'release.two' in types
+        res = client.post('/api/command', json={'prompt': 'remember release smoke command', 'context': {}})
+        assert res.status_code == 200
+        assert res.json()['status'] == 'completed'
+
+
+def test_final_e2e_cognitive_operational_persistence_smoke(tmp_path):
+    from app.cognitive_core import CognitiveCore
+    c = CognitiveCore(tmp_path/'release_state.json', limits={'max_events':500,'max_browser_requests':3,'tick_budget_ms':5})
+    ev = c.ingest_evidence('release candidate has_state tested', 'release_smoke', 'test', 0.9, 'supports', 0.8)
+    assert ev.id in c.evidence and c.world
+    plan = c.create_plan('search docs release smoke')
+    out = c.execute_plan(plan.plan_id, {'step_1': {'success': False, 'actual_outcome': 'timeout', 'error_type': 'timeout'}})
+    assert out['status'] in {'recovering','blocked','failed'}
+    assert c.actions and c.failures and c.skills
+    c.run_inquiry_results('release docs are documented', [{'title': 'Release docs', 'url': 'https://docs.example.test/release', 'content': 'official manual evidence'}])
+    tick = c.tick()
+    assert tick['events'] <= c.limits['max_events']
+    c.save(); restarted = CognitiveCore(tmp_path/'release_state.json')
+    assert restarted.evidence and restarted.beliefs and restarted.world and restarted.actions and restarted.failures
+
+
+def test_release_claim_audit_and_secret_hygiene():
+    root = Path(__file__).resolve().parents[2]
+    files = [p for p in [root/'README.md', root/'FINAL_RELEASE_REPORT.md', root/'NOOR_ENTITY_EVOLUTION_REPORT.md', root/'frontend/app/page.tsx', root/'frontend/components/MobileMirror.tsx', root/'frontend/components/AgentGraph.tsx'] if p.exists()]
+    text = '\n'.join(p.read_text().lower() for p in files)
+    forbidden = ['self-aware = true', 'living entity capability', 'provides full multimodal understanding', 'unbounded general autonomy', 'consciousness = true']
+    assert all(term not in text for term in forbidden)
+    assert 'prototype' in text and 'disabled by default' in text
+    tracked_text = '\n'.join(p.read_text(errors='ignore') for p in [root/'.env.example', root/'README.md', root/'FINAL_RELEASE_REPORT.md'])
+    assert 'sk-secret' not in tracked_text and 'test-openai-key' not in tracked_text

@@ -15,6 +15,15 @@ It is not a conscious system, not a general autonomous operator, and not a multi
 - **WebSocket event bus:** publishes bounded event history to allowed origins configured by environment variables.
 - **Cognitive core:** stores validated evidence, revisable beliefs, world relations, goals, predictions, outcome errors, learning statistics, and bounded autonomy ticks in JSON persistence. It is still a prototype, not consciousness.
 
+
+## Release candidate operating notes
+
+- Browser automation, mobile ADB control, and cloud LLM fallback are disabled by default in `.env.example` and must be explicitly enabled for local use.
+- If port 8000 is already in use, set `NOOR_BACKEND_PORT` before starting, for example `NOOR_BACKEND_PORT=8765 python start.py --mode local`.
+- WebSocket replay is bounded, and allowed origins default to local frontend origins only.
+- The cognitive/operational core is inspectable prototype state: evidence, beliefs, plans, actions, skills, procedures, benchmarks, and debug traces are stored for audit, not as claims of consciousness or general autonomy.
+- See `FINAL_RELEASE_REPORT.md` for the final release-candidate limits and verification scope.
+
 ## Quick start
 
 ```bash
@@ -36,4 +45,4 @@ python start.py --mode local
 
 ## Safety model
 
-Defaults are intentionally conservative. Browser and mobile automation can be disabled by configuration. CORS and WebSocket origins default to localhost frontend origins. Public posting and destructive operations should remain behind explicit confirmation and additional application-specific checks.
+Defaults are intentionally conservative. Browser and mobile automation are disabled by default and can be enabled by configuration. CORS and WebSocket origins default to localhost frontend origins. Public posting and destructive operations should remain behind explicit confirmation and additional application-specific checks.

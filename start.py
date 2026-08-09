@@ -21,12 +21,15 @@ def ensure_env():
         env.write_text(example.read_text()); print('[noor] created .env from .env.example')
 def require(name, hint):
     if not shutil.which(name): raise SystemExit(hint)
+def _backend_host_port():
+    return os.environ.get('NOOR_BACKEND_HOST','0.0.0.0'), os.environ.get('NOOR_BACKEND_PORT','8000')
 def docker_mode():
     require('docker','Docker is required for --mode docker'); ensure_env(); run(['docker','compose','up','-d','--build'])
-    print('[noor] waiting for backend health')
-    if not wait_http('http://localhost:8000/health',120):
+    _host, port = _backend_host_port()
+    print(f'[noor] waiting for backend health on port {port}')
+    if not wait_http(f'http://localhost:{port}/health',120):
         run(['docker','compose','logs','--tail','80'],check=False); raise SystemExit('Backend health check failed; recent logs printed above')
-    print('[noor] online: frontend=http://localhost:3000 backend=http://localhost:8000/docs')
+    print(f'[noor] online: frontend=http://localhost:3000 backend=http://localhost:{port}/docs')
 def terminate(children):
     for proc in children:
         if proc.poll() is None: proc.terminate()
@@ -38,13 +41,14 @@ def terminate(children):
 def local_mode():
     ensure_env(); require('npm','npm is required for --mode local')
     run([sys.executable,'-m','pip','install','-r','backend/requirements.txt']); run(['npm','install'],cwd=ROOT/'frontend')
-    children=[subprocess.Popen([sys.executable,'-m','uvicorn','app.main:app','--reload','--host','0.0.0.0','--port','8000'],cwd=ROOT/'backend'), subprocess.Popen(['npm','run','dev'],cwd=ROOT/'frontend')]
+    host, port = _backend_host_port()
+    children=[subprocess.Popen([sys.executable,'-m','uvicorn','app.main:app','--reload','--host',host,'--port',port],cwd=ROOT/'backend'), subprocess.Popen(['npm','run','dev'],cwd=ROOT/'frontend')]
     def stop(_sig=None,_frame=None): print('\n[noor] stopping services...', flush=True); terminate(children); sys.exit(0)
     signal.signal(signal.SIGTERM, stop); signal.signal(signal.SIGINT, stop)
     while True:
         time.sleep(1)
         exited=[p for p in children if p.poll() is not None]
         if exited:
-            code=exited[0].returncode; terminate(children); raise SystemExit(f'A Noor OS service exited unexpectedly with code {code}')
+            code=exited[0].returncode; terminate(children); raise SystemExit(f'A Noor OS service exited unexpectedly with code {code}. If backend failed to bind, set NOOR_BACKEND_PORT to a free port.')
 if __name__=='__main__':
     p=argparse.ArgumentParser(); p.add_argument('--mode',choices=['docker','local'],default='docker'); args=p.parse_args(); docker_mode() if args.mode=='docker' else local_mode()

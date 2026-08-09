@@ -12,3 +12,5 @@ playwright_profiles/
 
 noor_state.json
 backend/noor_state.json
+
+*.zip
